@@ -1,0 +1,73 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nba"
+version = "0.1.0"
+description = "Door-to-door Next Best Action: reward model -> bandit -> OPE gate -> TSP-P router."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "lightgbm>=4.3",
+    "ortools>=9.10",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "scikit-learn>=1.5",
+    "scipy>=1.13",
+    "joblib>=1.4",
+    "pyarrow>=16",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5",
+    "ruff>=0.5",
+    "pyright>=1.1.370",
+    "httpx>=0.27",
+    "jupyter>=1.0",
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+    "shap>=0.46",
+]
+
+# NOTE on OPE validation (Phase 5): the Open Bandit Pipeline (`obp`) pins an old scientific
+# stack (numpy==1.23.5, scipy==1.9.3, ...) that cannot coexist with this project's modern
+# dependencies in a single resolution. Install it in a SEPARATE, standalone environment for
+# cross-checking our estimators, e.g.:
+#     uv venv .venv-obp --python 3.10 && uv pip install --python .venv-obp obp
+# Phase 5 tests import obp lazily and skip when it is unavailable.
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nba"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.11"
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: tests that download data or are otherwise slow (deselect with '-m \"not slow\"')",
+]
+filterwarnings = [
+    "ignore:X does not have valid feature names:UserWarning",
+]
+
+[tool.coverage.run]
+source = ["nba"]
+branch = true
