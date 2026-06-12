@@ -76,9 +76,7 @@ def test_decision_without_outcome_loads_unlabeled(settings: Settings) -> None:
 def test_context_roundtrip_fidelity(settings: Settings) -> None:
     store = EventStore(settings.db_path)
     ctx = _ctx(7)
-    store.append_decision(
-        context=ctx, action=Action.LEAVE_FLYER, propensity=0.1, policy_name="ucb"
-    )
+    store.append_decision(context=ctx, action=Action.LEAVE_FLYER, propensity=0.1, policy_name="ucb")
 
     (event,) = store.load_events()
     assert event.context == ctx

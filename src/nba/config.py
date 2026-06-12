@@ -40,6 +40,8 @@ class Settings(BaseSettings):
 
     # ethics
     cap_exploration_in_sensitive: bool = True
+    sensitive_prior_interactions: int = 4  # >= this many prior contacts flags a door sensitive
+    sensitive_exploration_ceiling: float = 0.05  # max non-greedy mass allowed in a sensitive door
 
     def ensure_dirs(self) -> None:
         """Create all configured output directories. Idempotent."""

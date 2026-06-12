@@ -26,14 +26,37 @@ uv run python scripts/train_reward.py  --logs data/logs.parquet --out artifacts/
 # off-policy-evaluate a candidate policy and gate its promotion
 uv run python scripts/evaluate_policy.py --policy ucb
 
+# run the whole loop offline for one simulated shift + print the comparison report
+make demo      # = uv run python scripts/run_demo.py  (writes artifacts/demo_report.json)
+
 # serve the closed loop (recommend / feedback / route / health)
-uv run uvicorn nba.api.app:app --reload   # then POST /recommend, /feedback, /route
+make api        # = uv run uvicorn nba.api.app:app --reload  → POST /recommend, /feedback, /route
 ```
+
+`make demo` is the fastest way to see everything at once: it bootstraps logs, trains the reward
+model, off-policy-evaluates ε-greedy / UCB / Thompson, gates the winner, then walks a simulated
+shift — comparing the chosen bandit against uniform-random and exploit-only baselines, measuring
+regret against the oracle, and reporting routing time saved versus a naive visit-all tour.
+
+## Architecture in one line
+
+```
+context x → reward model q(x,a) → bandit policy (+ ethics cap) → OPE gate → per-door profit → TSP-P route
+                     ▲                                                                            │
+                     └──────────────── append-only event log (context, action, reward, p) ◄──────┘
+```
+
+**The bandit proposes, the router disposes**, and every decision logs its propensity `p` so the
+OPE gate can safely vet the *next* policy before it ever reaches the field. See
+[ARCHITECTURE.md](ARCHITECTURE.md) for the full picture, [plans/](plans) for per-phase specs, and
+[docs/](docs) for concepts — including [docs/09-build-nba-from-scratch.md](docs/09-build-nba-from-scratch.md),
+a from-zero walkthrough of the entire system.
 
 ## Status
 
-The end-to-end loop is implemented: simulator → reward model → bandit policies → OPE gate →
-TSP-with-profits router → orchestrator + FastAPI service over an append-only event store.
+The full end-to-end loop is implemented and verified: simulator → reward model → bandit policies →
+OPE gate → TSP-with-profits router → orchestrator + FastAPI service over an append-only event store,
+with ethics guardrails and a system-level verification suite.
 
 | Phase | Area | State |
 |------:|------|-------|
@@ -45,11 +68,11 @@ TSP-with-profits router → orchestrator + FastAPI service over an append-only e
 | 5 | OPE estimators + promotion gate | done |
 | 6 | Routing / TSP-with-profits | done |
 | 7 | Orchestrator + FastAPI + event store | done |
-| 8 | Demo + end-to-end verification | planned |
+| 8 | Demo + end-to-end + ethics verification | done |
 
 Notebooks in [notebooks/](notebooks) mirror each phase: EDA, reward-model explainability, display
-calibration, bandit behavior, off-policy evaluation, TSP-with-profits routing, and the
-orchestrator/API loop.
+calibration, bandit behavior, off-policy evaluation, TSP-with-profits routing, the orchestrator/API
+loop, and the [end-to-end demo](notebooks/end_to_end_demo.ipynb).
 
 ## Toolchain
 

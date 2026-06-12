@@ -123,9 +123,7 @@ def solve_tsp_profits(
             return 0 if manager.IndexToNode(from_index) == depot else 1
 
         demand_idx = routing.RegisterUnaryTransitCallback(demand_cb)
-        routing.AddDimensionWithVehicleCapacity(
-            demand_idx, 0, [int(capacity)], True, "Capacity"
-        )
+        routing.AddDimensionWithVehicleCapacity(demand_idx, 0, [int(capacity)], True, "Capacity")
 
     if time_windows is not None:
         horizon = max(int(close) for _, close in time_windows)
@@ -169,8 +167,7 @@ def solve_tsp_profits(
         node
         for node in range(n)
         if node != depot
-        and solution.Value(routing.NextVar(manager.NodeToIndex(node)))
-        == manager.NodeToIndex(node)
+        and solution.Value(routing.NextVar(manager.NodeToIndex(node))) == manager.NodeToIndex(node)
     ]
 
     travel_s = sum(float(tm[a][b]) for a, b in zip(order[:-1], order[1:], strict=True))

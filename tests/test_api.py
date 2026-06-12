@@ -56,9 +56,7 @@ def test_recommend_feedback_route_roundtrip(client: TestClient) -> None:
         for k in range(5)
     ]
     contexts.append(base.model_copy(update={"address_id": "far", "lat": 42.03, "lon": -93.6}))
-    route = client.post(
-        "/route", json={"contexts": [c.model_dump(mode="json") for c in contexts]}
-    )
+    route = client.post("/route", json={"contexts": [c.model_dump(mode="json") for c in contexts]})
     assert route.status_code == 200
     rbody = route.json()
     assert "far" in rbody["dropped"]

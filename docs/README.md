@@ -34,6 +34,7 @@ adapt to a non-stationary world. It combines four disciplines:
 | 6 | [06-cloud-architecture.md](06-cloud-architecture.md) | AWS reference architecture, propensity logging, and bandit serving. |
 | 7 | [07-deployment-roadmap.md](07-deployment-roadmap.md) | Phased rollout: telemetry → LightGBM baseline → bandit wrapper → geo-constraining → online A/B. |
 | 8 | [08-bandits-and-offline-evaluation.md](08-bandits-and-offline-evaluation.md) | Deep dive: bandit math, why bandits beat pure supervised learning, IPS/DM/DR, cold start, non-stationarity. |
+| 9 | [09-build-nba-from-scratch.md](09-build-nba-from-scratch.md) | **The complete build, from zero.** Every concept and abbreviation explained, mapped onto the actual code in this repo — read this to learn how to build the whole system yourself. |
 
 ## Core idea in one diagram
 

@@ -46,17 +46,20 @@ These constraints are enforced in code and explain most of the structure.
   seeded (`Settings.seed`, explicit `np.random.Generator`s) so runs are reproducible and tests
   are stable.
 - **Oracle isolation.** The simulator's ground-truth functions (`latent_scores`, `true_reward`,
-  `true_best_action`) are the *only* source of truth and must **never** be imported by
-  `nba.reward`, `nba.bandits`, or `nba.ope`. Those modules only ever see logged
-  `(context, action, reward, propensity)` tuples — exactly as in production. The oracle is used
-  only by the simulator and by notebooks/tests for evaluation.
+  `true_best_action`) are the *only* source of truth and must **never** be imported by the learning
+  modules (`nba.reward`, `nba.bandits`, `nba.ope`, `nba.routing`, `nba.api`, `nba.pipeline`). Those
+  modules only ever see logged `(context, action, reward, propensity)` tuples — exactly as in
+  production. The oracle is used only by the simulator and by scripts/notebooks/tests for
+  evaluation. This is enforced by an AST scan (`tests/test_ethics.py::test_no_oracle_leak`).
 - **Propensity logging & overlap.** Every logged decision carries `p = P(action | context)`,
   strictly positive. Off-policy estimators reweight by `1/p`; a zero anywhere breaks overlap, so
   all serving policies emit **full-support** action distributions.
-- **Ethics by construction.** Models are built *only* from an allow-list of features
-  (`ALLOWED_FEATURES`). Geo/identity fields (`lat`, `lon`, `address_id`) and any protected
-  attribute are excluded by construction, not by omission — the feature vector is assembled from
-  the allow-list, never by reflecting over the context.
+- **Ethics by construction.** Two layers. *Structural:* models are built *only* from an allow-list
+  of features (`ALLOWED_FEATURES`); geo/identity fields (`lat`, `lon`, `address_id`) and any
+  protected attribute are excluded by construction, not by omission — the feature vector is
+  assembled from the allow-list, never by reflecting over the context. *Behavioral:* in a
+  **sensitive** context (`nba.ethics`) an `EthicalPolicy` caps how much the policy may explore,
+  while preserving full support so logs stay OPE-valid.
 - **Frozen feature schema.** `FEATURE_NAMES` is the single source of truth for column order.
   Models persist it and **refuse to load** if it drifts, preventing silent train/serve skew.
 - **Pluggable interfaces.** Components depend on narrow `Protocol`s, not concrete classes
@@ -75,6 +78,7 @@ src/nba/
     simulator.py       # ✅ ground-truth oracle + logging policy → logged events
   reward/
     model.py           # ✅ RewardModel (LightGBM + isotonic), ExploitationBaseline
+  ethics.py            # ✅ is_sensitive, cap_exploration, EthicalPolicy wrapper
   bandits/
     base.py            # ✅ Policy/QModel/QEnsemble protocols, validate_dist, softmax
     epsilon_greedy.py  # ✅ EpsilonGreedy
@@ -98,10 +102,10 @@ scripts/
   generate_logs.py     # ✅ simulator → data/logs.parquet
   train_reward.py      # ✅ logs → artifacts/models (+ metrics.json)
   evaluate_policy.py   # ✅ OPE + promotion gate CLI
-  run_demo.py          # ⏳ planned (end-to-end shift)
+  run_demo.py          # ✅ end-to-end shift → artifacts/demo_report.json
 ```
 
-✅ implemented · ⏳ planned (see [PLAN.md](PLAN.md) phase 8).
+✅ implemented. All eight phases are complete (see [PLAN.md](PLAN.md)).
 
 ## 4. Core contracts
 
@@ -216,6 +220,26 @@ production with disk-backed artifacts.
   `argmax_profit=True` toggle recovers greedy best-action pricing. `replan(remaining)` re-solves
   over not-yet-visited doors.
 
+### Ethics (`ethics.py`)
+
+The behavioral guardrail (the structural one lives in `features.py`). `is_sensitive(ctx, settings)`
+flags a door on a **non-protected** behavioral signal — too many prior contacts — where repeated
+unsolicited visits warrant caution. `cap_exploration(dist, ceiling)` shrinks a distribution toward
+its mode so the non-modal ("explore") mass is `≤ ceiling` while keeping every arm `> 0` (so IPS/DR
+stay valid). `EthicalPolicy` wraps any `Policy`: a transparent pass-through in ordinary contexts,
+and an exploration-capped version in sensitive ones when `cap_exploration_in_sensitive` is set.
+
+### Pipeline & verification (`pipeline/`, `scripts/run_demo.py`)
+
+`scripts/run_demo.py` runs the *entire* loop offline for one simulated shift: bootstrap logs → fit
+the reward model → OPE-gate the three policies → plan and **walk** a route (`recommend → simulate
+outcome → feedback`, replanning periodically, wrapped in `EthicalPolicy`) → compare against
+uniform-random and exploit-only baselines, measure regret against the oracle, and quantify routing
+time saved. It prints a report and writes `artifacts/demo_report.json`. `tests/test_e2e.py` asserts
+the system-level claims (bandit beats uniform, value beats the logging baseline, regret far below
+random, far doors dropped, propensity on every decision, API roundtrip); `tests/test_ethics.py`
+asserts the guardrails (allow-list, sensitive cap, no oracle leak).
+
 ### API (`api/`)
 
 - **`store.py`** — an **append-only** SQLite `EventStore`: a `decisions` table (one row per
@@ -252,8 +276,9 @@ precondition for steps 6–7 to be valid. Pure exploitation short-circuits the l
 
 - **Configuration** — `config.py` exposes a pydantic `Settings` with every field overridable via
   an `NBA_*` env var: paths, `seed`, bandit knobs (`epsilon`, `ucb_c`, `softmax_temp`,
-  `n_bootstrap`), routing knobs, OPE gate thresholds, and the ethics switch
-  (`cap_exploration_in_sensitive`). `get_settings()` returns a cached singleton.
+  `n_bootstrap`), routing knobs, OPE gate thresholds, and the ethics knobs
+  (`cap_exploration_in_sensitive`, `sensitive_prior_interactions`,
+  `sensitive_exploration_ceiling`). `get_settings()` returns a cached singleton.
 - **Persistence** — `RewardModel.save/load` (joblib + a `feature_names.json` guard);
   `BootstrapEnsemble.save/load` (per-member directories + manifest). Batch logs are parquet; the
   serving `EventStore` is append-only SQLite (WAL), and both reconstruct the same `BanditEvent`s.
@@ -283,8 +308,10 @@ uv run python scripts/train_reward.py  --logs data/logs.parquet --out artifacts/
 | 5 | OPE estimators + promotion gate | ✅ done |
 | 6 | Routing / TSP-P | ✅ done |
 | 7 | Orchestrator + FastAPI service | ✅ done |
-| 8 | Demo + end-to-end verification | ⏳ planned |
+| 8 | Demo + end-to-end + ethics verification | ✅ done |
 
 See [PLAN.md](PLAN.md) and [plans/](plans) for detailed specs; notebooks in [notebooks/](notebooks)
 explore the EDA, reward-model explainability, display calibration, bandit behavior, off-policy
-evaluation, TSP-with-profits routing, and the orchestrator/API loop.
+evaluation, TSP-with-profits routing, the orchestrator/API loop, and the end-to-end demo. For a
+from-first-principles walkthrough of the whole build, see
+[docs/09-build-nba-from-scratch.md](docs/09-build-nba-from-scratch.md).
