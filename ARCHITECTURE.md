@@ -80,19 +80,24 @@ src/nba/
     epsilon_greedy.py  # ✅ EpsilonGreedy
     ucb.py             # ✅ UCB (bucketed counts + softmax)
     thompson.py        # ✅ BootstrapEnsemble + ThompsonSampling
-  ope/                 # ⏳ planned: estimators.py (IPS/DM/DR), gate.py
-  routing/             # ⏳ planned: distance.py, territories.py, tsp_profits.py
+  ope/
+    estimators.py      # ✅ IPS/SNIPS/DM/DR estimators, LoggedBatch, clipping + ESS
+    gate.py            # ✅ PromotionGate (DR lower bound vs baseline + min_lift)
+  routing/
+    distance.py        # ✅ DistanceEngine protocol, HaversineEngine, OSRMEngine stub
+    territories.py     # ✅ KMeans walkable territories (Territory, cluster_territories)
+    tsp_profits.py     # ✅ OR-Tools TSP-with-Profits solver (Route, solve_tsp_profits)
   pipeline/            # ⏳ planned: orchestrator.py
   api/                 # ⏳ planned: app.py (FastAPI), store.py (append-only event log)
 
 scripts/
   generate_logs.py     # ✅ simulator → data/logs.parquet
   train_reward.py      # ✅ logs → artifacts/models (+ metrics.json)
-  evaluate_policy.py   # ⏳ planned (OPE)
+  evaluate_policy.py   # ✅ OPE + promotion gate CLI
   run_demo.py          # ⏳ planned (end-to-end shift)
 ```
 
-✅ implemented · ⏳ planned (see [PLAN.md](PLAN.md) phases 5–8).
+✅ implemented · ⏳ planned (see [PLAN.md](PLAN.md) phases 7–8).
 
 ## 4. Core contracts
 
@@ -167,17 +172,32 @@ full-support distribution.
 
 > **Scale caveat (current finding):** calibrated `q`-gaps are O(0.1), so the config defaults
 > `ucb_c=1.0` / `softmax_temp=0.25` make UCB's bonus dwarf the signal and flatten it toward
-> uniform. Reward-scaled knobs (e.g. `c=0.3`, `temp=0.1`) are needed; final tuning belongs to the
-> Phase 5 evaluation work.
+> uniform. Reward-scaled knobs (e.g. `c=0.3`, `temp=0.1`) are needed; final tuning is validated by
+> the Phase 5 off-policy evaluation work.
 
-### Planned: OPE, routing, orchestrator, API
+### OPE (`ope/`)
 
-- **`ope/`** — IPS / DM / DR estimators and a promotion **gate** (a candidate policy is promoted
-  only if its estimated value beats the logging baseline within a confidence bound), validated
-  against the Open Bandit Pipeline.
-- **`routing/`** — Haversine distance matrix behind a `DistanceEngine` interface, KMeans walkable
-  territories, and an OR-Tools TSP-with-profits solver (drop-penalty = door profit, plus
-  time-window/capacity constraints).
+- **`estimators.py`** — IPS, SNIPS, DM, and DR estimators over a `LoggedBatch`, with optional
+  importance-weight clipping and an effective-sample-size guard that warns on poor overlap. DR is
+  unbiased if *either* `q̂` or the propensities are correct; SNIPS trades a little bias for much
+  lower variance; DM is lowest-variance but leans entirely on `q̂` calibration.
+- **`gate.py`** — `PromotionGate` promotes a candidate only if its DR lower confidence bound clears
+  the logging baseline plus `min_lift`, and flags IPS/DM disagreement as a calibration smell.
+
+### Routing (`routing/`)
+
+- **`distance.py`** — a `DistanceEngine` protocol returning a travel-**time** matrix (seconds).
+  `HaversineEngine` is a vectorized great-circle approximation; `OSRMEngine` is a conforming stub
+  documenting the seam for a future road network, so callers never change.
+- **`territories.py`** — KMeans (in equal-area-rescaled lat/lon) carves doors into walkable
+  territories so each TSP instance stays small and a route stays in one neighborhood.
+- **`tsp_profits.py`** — an OR-Tools TSP-with-Profits solver: every non-depot door is *optional*
+  with a drop penalty equal to its scaled profit, so the solver trades travel time against profit
+  and drops far-flung low-value doors. Capacity and per-node time windows are optional constraints;
+  fixed inputs + fixed time limit + single thread make routes deterministic.
+
+### Planned: orchestrator, API
+
 - **`pipeline/` + `api/`** — an orchestrator wiring bandit per-door profits into the router, and a
   thin FastAPI service (`/recommend` logs `p`, `/feedback` appends reward, `/route` re-solves)
   over an append-only event store.
@@ -230,10 +250,11 @@ uv run python scripts/train_reward.py  --logs data/logs.parquet --out artifacts/
 | 2 | D2D simulator + feature substrate | ✅ done |
 | 3 | Reward model (LightGBM + isotonic) | ✅ done |
 | 4 | Bandit policies (ε-greedy, UCB, Thompson) | ✅ done |
-| 5 | OPE estimators + promotion gate | ⏳ planned |
-| 6 | Routing / TSP-P | ⏳ planned |
+| 5 | OPE estimators + promotion gate | ✅ done |
+| 6 | Routing / TSP-P | ✅ done |
 | 7 | Orchestrator + FastAPI service | ⏳ planned |
 | 8 | Demo + end-to-end verification | ⏳ planned |
 
 See [PLAN.md](PLAN.md) and [plans/](plans) for detailed specs; notebooks in [notebooks/](notebooks)
-explore the EDA, reward-model explainability, display calibration, and bandit behavior.
+explore the EDA, reward-model explainability, display calibration, bandit behavior, off-policy
+evaluation, and TSP-with-profits routing.
