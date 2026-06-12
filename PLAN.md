@@ -112,4 +112,8 @@ Orchestrator wires bandit profits → TSP-P. Endpoints: `/recommend` (logs p), `
 
 ## Status
 
-**Plan logged — awaiting approval to implement.**
+Phases 0–7 are implemented and verified (`ruff`/`pyright` clean, `pytest` green). The full loop —
+simulator → reward model → bandit policies → OPE gate → TSP-with-profits router → orchestrator +
+FastAPI service over an append-only SQLite event store — runs offline and end-to-end. Each phase
+has a mirroring notebook in [notebooks/](notebooks). **Remaining:** Phase 8 (a `run_demo.py` that
+simulates a full shift end-to-end).

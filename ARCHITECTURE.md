@@ -20,16 +20,16 @@ flowchart LR
         LOGS --> RM[RewardModel.fit<br/>LightGBM + isotonic]
         RM --> ART[(artifacts/models)]
     end
-    subgraph online["serving / loop"]
+    subgraph online["serving / loop (FastAPI + Orchestrator)"]
         CTX[ProspectContext x] --> Q[RewardModel.q_all<br/>q x,a]
         Q --> POL[Bandit Policy<br/>ε-greedy · UCB · Thompson]
-        POL -->|action, propensity| LOG2[(event log)]
-        LOG2 -->|reward at feedback| LOG2
-        POL --> OPE[OPE gate<br/>IPS / DM / DR]
-        POL --> ROUTE[TSP-P router]
+        POL -->|action, propensity| STORE[(append-only<br/>EventStore)]
+        STORE -->|outcome at feedback| STORE
+        POL -->|bandit-weighted profit| ROUTE[TSP-P router]
+        STORE --> OPE[OPE gate<br/>IPS / DM / DR]
     end
     ART --> Q
-    LOG2 -.retrain.-> RM
+    STORE -.load_events / retrain.-> RM
 ```
 
 > **The bandit proposes, the router disposes.** The reward model says *what an action is worth*;
@@ -60,8 +60,8 @@ These constraints are enforced in code and explain most of the structure.
 - **Frozen feature schema.** `FEATURE_NAMES` is the single source of truth for column order.
   Models persist it and **refuse to load** if it drifts, preventing silent train/serve skew.
 - **Pluggable interfaces.** Components depend on narrow `Protocol`s, not concrete classes
-  (`QModel`, `QEnsemble`, `Policy`, and later `DistanceEngine`). Swapping a policy or distance
-  backend is a one-line change.
+  (`QModel`, `QEnsemble`, `Policy`, `DistanceEngine`). Swapping a policy or distance backend is a
+  one-line change.
 
 ## 3. Module map
 
@@ -87,8 +87,12 @@ src/nba/
     distance.py        # ✅ DistanceEngine protocol, HaversineEngine, OSRMEngine stub
     territories.py     # ✅ KMeans walkable territories (Territory, cluster_territories)
     tsp_profits.py     # ✅ OR-Tools TSP-with-Profits solver (Route, solve_tsp_profits)
-  pipeline/            # ⏳ planned: orchestrator.py
-  api/                 # ⏳ planned: app.py (FastAPI), store.py (append-only event log)
+  pipeline/
+    orchestrator.py    # ✅ Orchestrator (recommend/feedback/plan_route), RecommendResult
+  api/
+    store.py           # ✅ append-only EventStore (SQLite, decisions + outcomes)
+    models.py          # ✅ pydantic request/response DTOs
+    app.py             # ✅ FastAPI build_app factory + production app (lifespan)
 
 scripts/
   generate_logs.py     # ✅ simulator → data/logs.parquet
@@ -97,7 +101,7 @@ scripts/
   run_demo.py          # ⏳ planned (end-to-end shift)
 ```
 
-✅ implemented · ⏳ planned (see [PLAN.md](PLAN.md) phases 7–8).
+✅ implemented · ⏳ planned (see [PLAN.md](PLAN.md) phase 8).
 
 ## 4. Core contracts
 
@@ -196,23 +200,49 @@ full-support distribution.
   and drops far-flung low-value doors. Capacity and per-node time windows are optional constraints;
   fixed inputs + fixed time limit + single thread make routes deterministic.
 
-### Planned: orchestrator, API
+### Orchestrator (`pipeline/orchestrator.py`)
 
-- **`pipeline/` + `api/`** — an orchestrator wiring bandit per-door profits into the router, and a
-  thin FastAPI service (`/recommend` logs `p`, `/feedback` appends reward, `/route` re-solves)
-  over an append-only event store.
+The `Orchestrator` is the single seam where proposing meets disposing, and the only place a
+decision is logged. It is pure Python and dependency-injected (`policy`, `reward_model`,
+`distance_engine`, `store`, `settings`), so the same loop runs in tests with fakes and in
+production with disk-backed artifacts.
+
+- **`recommend(ctx)`** asks the policy for `(action, propensity)`, appends a decision to the
+  store, and returns a `RecommendResult` (`decision_id`, `action`, `propensity`, `q_values`).
+- **`feedback(decision_id, outcome)`** appends an outcome (404-able if the id is unknown).
+- **`plan_route(contexts)`** prices each door by its **bandit-weighted** value
+  `profit_d = Σ_a π(a|x_d)·q(x_d,a)` — so exploration value, not a raw argmax, flows into routing —
+  then solves TSP-with-Profits under the configured capacity and residential time window. The
+  `argmax_profit=True` toggle recovers greedy best-action pricing. `replan(remaining)` re-solves
+  over not-yet-visited doors.
+
+### API (`api/`)
+
+- **`store.py`** — an **append-only** SQLite `EventStore`: a `decisions` table (one row per
+  recommendation, `propensity NOT NULL`) and a 1:N `outcomes` table. No `UPDATE`/`DELETE` — a
+  correction is a new row and readers take the latest by autoincrement id, preserving the audit
+  trail. The full `ProspectContext` is stored as JSON so `load_events` reconstructs exact
+  `BanditEvent`s for training and OPE.
+- **`models.py`** — thin pydantic request/response DTOs reusing the domain types
+  (`ProspectContext`, `Action`, `Outcome`) so validation lives in one place.
+- **`app.py`** — `build_app(orchestrator)` is a factory so a `TestClient` can inject a seeded/fake
+  orchestrator without touching disk. The production `app` uses a lifespan that loads settings, the
+  reward model, an ε-greedy logging policy, a Haversine engine, and the store. Endpoints
+  (`/recommend`, `/feedback`→204, `/route`, `/health`) are thin HTTP↔orchestrator adapters; unknown
+  ids → 404, malformed bodies → 422.
 
 ## 6. Control & data flow (the closed loop)
 
 1. **Generate** logs from the simulator (`scripts/generate_logs.py`) → `data/logs.parquet`.
 2. **Train** the reward model (`scripts/train_reward.py`) → `artifacts/models/` (+ `metrics.json`).
 3. **Score**: `RewardModel.q_all(ctx)` gives per-action expected reward.
-4. **Propose**: a `Policy` returns `(action, propensity)`; `action_dist` records the full
-   distribution.
-5. **Log**: persist `BanditEvent(context, action, reward, propensity, …)`.
-6. **Evaluate** (planned): OPE estimates a candidate policy's value from the logs; the gate
-   decides promotion.
-7. **Retrain**: accumulated logs refit the reward model (and ensemble), sharpening future
+4. **Propose**: `Orchestrator.recommend` calls a `Policy` for `(action, propensity)` and returns a
+   `decision_id`.
+5. **Log**: the `EventStore` persists the decision (`propensity NOT NULL`); `feedback` later
+   appends the outcome. `load_events` reconstructs `BanditEvent`s.
+6. **Route**: `plan_route` turns bandit-weighted door profits into a walkable TSP-P plan.
+7. **Evaluate**: OPE estimates a candidate policy's value from the logs; the gate decides promotion.
+8. **Retrain**: accumulated logs refit the reward model (and ensemble), sharpening future
    proposals — closing the loop.
 
 Exploration is the hinge: it keeps logged `p` strictly positive (bounded `1/p`), which is the
@@ -225,8 +255,8 @@ precondition for steps 6–7 to be valid. Pure exploitation short-circuits the l
   `n_bootstrap`), routing knobs, OPE gate thresholds, and the ethics switch
   (`cap_exploration_in_sensitive`). `get_settings()` returns a cached singleton.
 - **Persistence** — `RewardModel.save/load` (joblib + a `feature_names.json` guard);
-  `BootstrapEnsemble.save/load` (per-member directories + manifest). Logs are parquet; the
-  planned event store is append-only.
+  `BootstrapEnsemble.save/load` (per-member directories + manifest). Batch logs are parquet; the
+  serving `EventStore` is append-only SQLite (WAL), and both reconstruct the same `BanditEvent`s.
 - **Determinism & seeding** — a single `seed` flows from `Settings` into every generator; the
   reward model's train/val split, the bootstrap resamples (seed offset per member), and policy
   sampling are all reproducible.
@@ -252,9 +282,9 @@ uv run python scripts/train_reward.py  --logs data/logs.parquet --out artifacts/
 | 4 | Bandit policies (ε-greedy, UCB, Thompson) | ✅ done |
 | 5 | OPE estimators + promotion gate | ✅ done |
 | 6 | Routing / TSP-P | ✅ done |
-| 7 | Orchestrator + FastAPI service | ⏳ planned |
+| 7 | Orchestrator + FastAPI service | ✅ done |
 | 8 | Demo + end-to-end verification | ⏳ planned |
 
 See [PLAN.md](PLAN.md) and [plans/](plans) for detailed specs; notebooks in [notebooks/](notebooks)
 explore the EDA, reward-model explainability, display calibration, bandit behavior, off-policy
-evaluation, and TSP-with-profits routing.
+evaluation, TSP-with-profits routing, and the orchestrator/API loop.
