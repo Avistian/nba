@@ -563,7 +563,7 @@ one is the expensive failure mode (you deploy a worse policy and lose real money
 
 In symbols, with `z` controlling the CI width (e.g. `z=1.96` for ~95%):
 
-$$\hat V_{\text{DR}} - z\cdot \text{SE}_{\text{DR}} \;>\; V_{\text{baseline}} + \text{min\_lift} \;\Rightarrow\; \textbf{PROMOTE}$$
+$$\hat V_{\text{DR}} - z\cdot \text{SE}_{\text{DR}} \;>\; V_{\text{baseline}} + \text{min lift} \;\Rightarrow\; \textbf{PROMOTE}$$
 
 The **logging baseline** is just the mean reward in the held-out logs — the on-policy value of the
 policy that *made* the logs, which is what we're currently doing and must beat. The gate also reports
@@ -723,7 +723,7 @@ How do you know the system is any good? The cleanest yardstick is **regret**: th
 on the table* versus an oracle that always picks the truly best action. Over a sequence of `T`
 decisions:
 
-$$\text{Regret} = \sum_{t=1}^{T}\Big(\underbrace{r^\star(x_t)}_{\text{true\_reward of oracle's best}} - \underbrace{r(x_t, a_t)}_{\text{true\_reward of what we did}}\Big)$$
+$$\text{Regret} = \sum_{t=1}^{T}\Big(\underbrace{r^\star(x_t)}_{\text{true reward of oracle's best}} - \underbrace{r(x_t, a_t)}_{\text{true reward of what we did}}\Big)$$
 
 Regret uses the oracle (`true_reward`, `true_best_action`) — so it is strictly an **evaluation**
 metric, computed in scripts/tests, never inside the learning code.
