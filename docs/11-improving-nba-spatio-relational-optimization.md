@@ -163,11 +163,11 @@ profit collected, but the whole route must finish within the shift.* This direct
 
 ### 4.2 Route the whole team (Team Orienteering)
 
-`pywrapcp.RoutingIndexManager(n, num_vehicles, depot)` already supports multiple vehicles — today
-it's hard-coded to `1`. Lift `num_vehicles` to the number of reps on shift and give each its own
-start location. OR-Tools then partitions doors across reps and routes each, never double-serving a
-door (each non-depot node still has its single `AddDisjunction`). This is the **Team Orienteering
-Problem**, and it's the difference between a single-rep toy and a dispatch system.
+`pywrapcp.RoutingIndexManager` already supports multiple vehicles — today it's hard-coded to `1`.
+If all reps share one depot, `RoutingIndexManager(n, num_vehicles, depot)` is sufficient; if reps have
+distinct starts/ends, use the `RoutingIndexManager(n, num_vehicles, starts, ends)` overload (or model per-rep depots as nodes).
+OR-Tools then partitions doors across reps and routes each, never double-serving a door (each non-depot node still has its single `AddDisjunction`).
+This is the **Team Orienteering Problem**, and it's the difference between a single-rep toy and a dispatch system.
 
 ### 4.3 Use real road travel times
 
