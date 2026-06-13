@@ -36,6 +36,8 @@ adapt to a non-stationary world. It combines four disciplines:
 | 8 | [08-bandits-and-offline-evaluation.md](08-bandits-and-offline-evaluation.md) | Deep dive: bandit math, why bandits beat pure supervised learning, IPS/DM/DR, cold start, non-stationarity. |
 | 9 | [09-build-nba-from-scratch.md](09-build-nba-from-scratch.md) | **The complete build, from zero.** Every concept and abbreviation explained, mapped onto the actual code in this repo — read this to learn how to build the whole system yourself. |
 | 10 | [10-implementation-rationale-and-alternatives.md](10-implementation-rationale-and-alternatives.md) | **Extended build guide:** every implementation step with *why* it exists and which alternatives were considered (and when to pick them). Companion to docs 05 and 09. |
+| 11 | [11-improving-nba-spatio-relational-optimization.md](11-improving-nba-spatio-relational-optimization.md) | **Upgrade roadmap (optimizer side):** close the predict-then-route gap via the Orienteering Problem, decision-focused learning, risk-aware routing, neural combinatorial optimization, and dynamic VRP — cheapest, surest wins first. |
+| 12 | [12-relational-deep-learning-mixin.md](12-relational-deep-learning-mixin.md) | **Upgrade roadmap (value side):** is there value in mixing in Relational Deep Learning? When a GNN over the CRM graph beats the LightGBM reward model, the safety rails it must keep, and the one genuinely novel combination (decision-focused RDL). |
 
 ## Core idea in one diagram
 
