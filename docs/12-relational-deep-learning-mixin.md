@@ -93,7 +93,7 @@ flowchart LR
 ```
 
 The crucial engineering point: the orchestrator already talks to the reward model through the
-**`QModel` protocol** (`src/nba/bandits/base.py` — a single `q_all(ctx)` method; the production
+**`QModel` protocol** (`src/nba/bandits/base.py` — `q_all(ctx, actions=ACTIONS)`; the production
 `RewardModel` adds `q`/`best_action` on top). An RDL model that implements that protocol drops in
 **without touching** the bandit, OPE, router, API, or ethics code.
 That makes RDL a *contained, reversible experiment*, not a rewrite — which is the only responsible way
