@@ -788,7 +788,9 @@ locked down by automated tests:
 ## 21. Build it yourself: a step-by-step checklist
 
 If you wanted to recreate this from an empty folder, here's the dependency-ordered path — the same
-order the phases in [PLAN.md](../PLAN.md) follow:
+order the phases in [PLAN.md](../PLAN.md) follow. For **why** each step exists and **which
+alternatives** were considered, see
+[10-implementation-rationale-and-alternatives.md](10-implementation-rationale-and-alternatives.md).
 
 1. **Scaffold.** A `pyproject.toml` (LightGBM, OR-Tools, FastAPI, pydantic, pandas, numpy,
    scikit-learn), a `Settings` config object with a single `seed`, and a `Makefile`.
