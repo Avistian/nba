@@ -2,7 +2,10 @@
 
 This is the end-to-end build, linking a **reward model**, a **contextual bandit**, an **OPE
 safety gate**, and a **geographic constraint solver**. It maps directly to the phased rollout
-in [07-deployment-roadmap.md](07-deployment-roadmap.md). Six steps:
+in [07-deployment-roadmap.md](07-deployment-roadmap.md). For a longer treatment of **why** each
+step exists and **what alternatives** were considered, see
+[10-implementation-rationale-and-alternatives.md](10-implementation-rationale-and-alternatives.md).
+Six steps:
 
 ```mermaid
 flowchart TB
