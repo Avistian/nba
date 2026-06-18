@@ -135,11 +135,14 @@ so wins can't be noise — and a **regression blocks the upgrade's adoption**. E
 its leaderboard experiment(s) in its plan file, and is not "done" until it has passing tests **and** a
 logged leaderboard row that is a lift or a deliberate, documented neutral.
 
-### Phase 9 — Relational dataset *(depends 1, 2)* — [plan](plans/phase-09-relational-dataset.md) · [doc](docs/13-relational-dataset.md)
+### Phase 9 — Relational dataset *(depends 1, 2)* — ✅ **built** — [plan](plans/phase-09-relational-dataset.md) · [doc](docs/13-relational-dataset.md)
 A **new dataset that mirrors** the flat simulator (`dataset_mode`) but with genuine relational/
 temporal ground truth (households, neighbor/competitor edges, interaction histories) and a
 heterogeneous-graph builder behind a graph allow-list. Emits a schema-identical `BanditEvent` stream
-so all downstream code is unchanged. **Foundation for RDL.**
+so all downstream code is unchanged. **Foundation for RDL.** The `BanditEvent` data contract is
+**unchanged**: relational structure rides in additive sidecars (`data/relational/{households,edges}.parquet`,
+`graph.npz`) plus one optional non-model `household_id` column. Ships `src/nba/data/relational_simulator.py`,
+`src/nba/data/graph.py`, `scripts/generate_relational_logs.py`, and a degenerate-world==flat test.
 
 ### Phase 10 — Upgrade 1: Orienteering *(depends 6)* — [plan](plans/phase-10-orienteering.md) · [doc](docs/14-orienteering-upgrade.md)
 Explicit shift-time budget (OP), multi-rep routing (TOP), and a real `OSRMEngine` — additive params
@@ -169,18 +172,21 @@ Attention encoder-decoder router behind a `Router` protocol with OR-Tools as the
 The research frontier: train the GNN end-to-end through the orienteering optimizer (fuses Phases 12 +
 14); flag `use_decision_focused_rdl`.
 
-### Phase 17 — Experiment leaderboard *(depends 9, 5, 8; built right after Phase 9, before the upgrades)* — [plan](plans/phase-17-experiment-leaderboard.md) · [doc](docs/21-experiment-leaderboard.md)
-The cross-cutting evaluation harness for Phases 10–16: `src/nba/eval/{metrics,leaderboard}.py` +
-`scripts/run_experiment.py` write an **append-only** `artifacts/leaderboard.jsonl` recording each
-experiment's flags, metrics, per-metric delta vs `baseline`, DR-gate result, and **lift/regression/
+### Phase 17 — Experiment leaderboard *(depends 9, 5, 8; built right after Phase 9, before the upgrades)* — ✅ **built** — [plan](plans/phase-17-experiment-leaderboard.md) · [doc](docs/21-experiment-leaderboard.md)
+The cross-cutting evaluation harness for Phases 10–16: `src/nba/eval/{oracle,metrics,leaderboard}.py` +
+`scripts/run_experiment.py` write an **append-only** `artifacts/leaderboard.jsonl` (+ `.md`) recording
+each experiment's flags, metrics, per-metric delta vs `baseline`, DR-gate result, and **lift/regression/
 neutral** verdict. Built immediately after the relational dataset (so it can grade on both datasets)
-and before any upgrade, which must each prove value here.
+and before any upgrade, which must each prove value here. Grading reaches the oracle only through
+`eval/oracle.py` (dataset-aware), so the flat pipeline stays byte-identical. The shipped board carries
+the `baseline` and a `phase09-relational` row (a deliberate **neutral** — the dataset is a substrate,
+not a value change).
 
 ## Verification matrix
 
 | Claim | Where | State |
 |-------|-------|-------|
-| `pytest` green across all modules | `make test` (143 passed, 1 skipped) | ✅ |
+| `pytest` green across all modules | `make test` (166 passed, 1 skipped) | ✅ |
 | OPE estimators match OBP within tolerance | `tests/test_ope.py` (slow) | ✅ |
 | Bandit beats the uniform baseline | `tests/test_e2e.py::test_bandit_beats_uniform` | ✅ |
 | Selected policy's value beats the logging baseline | `tests/test_e2e.py::test_selected_policy_beats_logging_baseline` | ✅ |
@@ -192,16 +198,17 @@ and before any upgrade, which must each prove value here.
 | No protected/geo attributes in features | `tests/test_ethics.py` | ✅ |
 | Exploration capped in sensitive contexts | `tests/test_ethics.py` | ✅ |
 | No oracle leakage into learning modules | `tests/test_ethics.py::test_no_oracle_leak` | ✅ |
-| Relational dataset mirrors flat (schema round-trip; degenerate==flat) | `tests/test_relational_simulator.py` (Phase 9) | ⏳ planned |
-| Graph allow-list blocks geo/identity/protected at node+edge | `tests/test_graph.py` (Phase 9) | ⏳ planned |
+| Relational dataset mirrors flat (schema round-trip; degenerate==flat) | `tests/test_relational_simulator.py` (Phase 9) | ✅ |
+| Graph allow-list blocks geo/identity/protected at node+edge | `tests/test_graph.py` (Phase 9) | ✅ |
+| Flat `run_demo(seed=7)` byte-identical after oracle indirection | `tests/test_demo_dataset_modes.py` (Phase 17) | ✅ |
 | Budgeted route ≤ shift budget; team route never double-serves | `tests/test_routing.py` (Phase 10) | ⏳ planned |
 | All upgrade flags off reproduce today's behavior exactly | per-phase tests (Phases 9–16) | ⏳ planned |
 | Risk-aware routing reduces realized-value variance (κ=0 no-op) | `tests/test_orchestrator.py` (Phase 11) | ⏳ planned |
 | Decision-focused model lowers decision regret at ≥ OPE | `tests/test_decision_focused.py` (Phase 12) | ⏳ planned |
 | Stochastic prizes shrink downside risk | `tests/test_dynamic.py` (Phase 13) | ⏳ planned |
 | RDL model promotes only via the same DR gate on route value | `tests/test_graph_model.py` (Phase 14) | ⏳ planned |
-| Every phase logs a lift/regression leaderboard row vs baseline | `tests/test_leaderboard.py` (Phase 17) | ⏳ planned |
-| Leaderboard is append-only; lift requires primary-metric gain + DR gate | `tests/test_leaderboard.py` (Phase 17) | ⏳ planned |
+| Every phase logs a lift/regression leaderboard row vs baseline | `tests/test_leaderboard.py` (Phase 17) | ✅ |
+| Leaderboard is append-only; lift requires primary-metric gain + DR gate | `tests/test_leaderboard.py` (Phase 17) | ✅ |
 
 † The PLAN originally framed this as "cumulative regret trends down." That downward *curve* is an
 **online-learning** phenomenon (the model improving across many rounds). A single deployed shift
@@ -211,10 +218,14 @@ to optimal). The demo reports the full curve so the stationarity is visible.
 
 ## Status
 
-**All phases (0–8) are implemented and verified** — `ruff`/`pyright` clean, `pytest` green
-(143 passed, 1 skipped). The full loop — simulator → reward model → bandit policies → OPE gate →
-TSP-with-profits router → orchestrator + FastAPI service over an append-only SQLite event store,
-with ethics guardrails — runs offline and end-to-end. `make demo` runs it for one shift and writes
-`artifacts/demo_report.json`. Each phase has a mirroring notebook in [notebooks/](notebooks), and
+**Phases 0–8 are implemented and verified, plus Phase 9 (relational dataset) and Phase 17 (experiment
+leaderboard)** — `ruff`/`pyright` clean, `pytest` green. The full loop — simulator → reward model →
+bandit policies → OPE gate → TSP-with-profits router → orchestrator + FastAPI service over an
+append-only SQLite event store, with ethics guardrails — runs offline and end-to-end. `make demo` runs
+it for one shift and writes `artifacts/demo_report.json`. The relational dataset mirrors the flat one
+behind `dataset_mode` (additive sidecars, unchanged `BanditEvent` contract); the experiment leaderboard
+grades any flag config against the `baseline` into an append-only `artifacts/leaderboard.jsonl`. Each
+phase has a mirroring **parametrized** notebook in [notebooks/](notebooks) (a `DATASET_MODE` toggle
+switches flat/relational; originals preserved in [notebooks/old/](notebooks/old)), and
 [docs/09-build-nba-from-scratch.md](docs/09-build-nba-from-scratch.md) explains the whole build from
 first principles.

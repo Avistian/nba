@@ -10,6 +10,14 @@ This is the **foundation** for Relational Deep Learning ([18](18-relational-deep
 enriches the dynamic and decision-focused phases too. It changes nothing until you set
 `NBA_DATASET_MODE=relational`.
 
+> **Status: built.** Ships `src/nba/data/relational_simulator.py`, `src/nba/data/graph.py`, and
+> `scripts/generate_relational_logs.py`, with `tests/test_relational_simulator.py` and
+> `tests/test_graph.py`. The **`BanditEvent` data contract did not change**: relational structure rides
+> in additive sidecars (`households.parquet`, `edges.parquet`, `graph.npz`) plus one optional non-model
+> `household_id` DataFrame column on `logs.parquet` (a column only — never a `ProspectContext` field —
+> so `frame_to_events` ignores it and round-trips stay identical). See the decision record in
+> [decisions/2026-06-18-relational-dataset-contract.md](../decisions/2026-06-18-relational-dataset-contract.md).
+
 ## 1. Why a new dataset at all
 
 Today's `src/nba/data/simulator.py` samples **independent** prospects: each door's

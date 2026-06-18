@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,6 +22,16 @@ class Settings(BaseSettings):
     # determinism
     seed: int = 7
 
+    # dataset selection (Phase 9). Default reproduces today exactly: nothing relational
+    # is imported on the hot path while ``dataset_mode == "flat"``.
+    dataset_mode: Literal["flat", "relational"] = "flat"
+    relational_data_dir: Path = Path("data/relational")
+    n_households: int = 0  # 0 => derive from n (~1 household per 3 doors)
+    neighbor_radius_km: float = 0.15  # two doors get a ``near`` edge within this radius
+    history_len: int = 8  # max prior interactions retained per prospect
+    competitor_density: float = 0.2  # fraction of blocks carrying a competitor-overlap edge
+    relational_seed: int = 7  # independent seed so the relational world is reproducible
+
     # bandit knobs
     epsilon: float = 0.10
     ucb_c: float = 1.0
@@ -37,6 +48,13 @@ class Settings(BaseSettings):
     # ope / gate
     ope_min_lift: float = 0.0
     ope_z: float = 1.96
+
+    # experiment leaderboard (Phase 17). Infra knobs; they do not alter the served loop.
+    leaderboard_path: Path = Path("artifacts/leaderboard.jsonl")
+    baseline_experiment_id: str = "baseline"
+    eval_n_shifts: int = 50  # simulated shifts per experiment (variance/CVaR need repeats)
+    eval_seeds: tuple[int, ...] = (7,)  # seeds swept per experiment for reproducible spread
+    eval_cvar_alpha: float = 0.2  # worst-tail fraction for the CVaR (downside) metric
 
     # ethics
     cap_exploration_in_sensitive: bool = True

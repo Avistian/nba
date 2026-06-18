@@ -139,10 +139,15 @@ def render_table(records) -> str        # markdown leaderboard, best-first, with
   so `+` always means "better."
 - `render_table` ranks best-first and is stable/reproducible.
 
-## Acceptance
+## Acceptance — ✅ built
 
-- `python scripts/run_experiment.py --baseline-only` writes the reference row; a subsequent
+- [x] `python scripts/run_experiment.py --baseline-only` writes the reference row; a subsequent
   `run_experiment` for any phase appends a row tagged **lift / regression / neutral** vs that baseline,
-  with per-metric deltas and the DR gate result.
-- The leaderboard is append-only, reproducible by seed, and uses the oracle for grading only.
-- `ruff` / `pyright` clean; `pytest` green.
+  with per-metric deltas and the DR gate result. The shipped `artifacts/leaderboard.jsonl` (+ `.md`)
+  carries `baseline` and `phase09-relational` (a deliberate **neutral**).
+- [x] The leaderboard is append-only, reproducible by seed, and uses the oracle for grading only
+  (`tests/test_leaderboard.py`, `tests/test_eval_metrics.py`).
+- [x] `ruff` / `pyright` clean; `pytest` green.
+- Built via `src/nba/eval/{oracle,metrics,leaderboard}.py` and `scripts/run_experiment.py`. Grading
+  indirection decision:
+  [decisions/2026-06-18-dataset-aware-grading-oracle.md](../decisions/2026-06-18-dataset-aware-grading-oracle.md).

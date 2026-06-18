@@ -20,6 +20,8 @@ _FORBIDDEN_FEATURES = {"lat", "lon", "address_id", "age", "race", "gender", "eth
 # Learning packages that must never see the simulator oracle.
 _LEARNING_PACKAGES = ("reward", "bandits", "ope", "routing", "api", "pipeline")
 _ORACLE_NAMES = {"true_reward", "latent_scores", "true_best_action", "outcome_probs"}
+# Oracle-bearing modules (flat + relational) that learning code must never import from.
+_ORACLE_MODULE_PREFIXES = ("nba.data.sim", "nba.data.relational_sim")
 
 
 class _FakeModel:
@@ -142,7 +144,9 @@ def _iter_learning_files() -> list[Path]:
 def test_no_oracle_leak(path: Path) -> None:
     tree = ast.parse(path.read_text(), filename=str(path))
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("nba.data.sim"):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+            _ORACLE_MODULE_PREFIXES
+        ):
             imported = {alias.name for alias in node.names}
             assert not (imported & _ORACLE_NAMES), f"{path.name} imports oracle: {imported}"
         if isinstance(node, ast.Name) and node.id in _ORACLE_NAMES:

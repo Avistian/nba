@@ -38,7 +38,7 @@ adapt to a non-stationary world. It combines four disciplines:
 | 10 | [10-implementation-rationale-and-alternatives.md](10-implementation-rationale-and-alternatives.md) | **Extended build guide:** every implementation step with *why* it exists and which alternatives were considered (and when to pick them). Companion to docs 05 and 09. |
 | 11 | [11-improving-nba-spatio-relational-optimization.md](11-improving-nba-spatio-relational-optimization.md) | **Upgrade roadmap (optimizer side):** close the predict-then-route gap via the Orienteering Problem, decision-focused learning, risk-aware routing, neural combinatorial optimization, and dynamic VRP — cheapest, surest wins first. |
 | 12 | [12-relational-deep-learning-mixin.md](12-relational-deep-learning-mixin.md) | **Upgrade roadmap (value side):** is there value in mixing in Relational Deep Learning? When a GNN over the CRM graph beats the LightGBM reward model, the safety rails it must keep, and the one genuinely novel combination (decision-focused RDL). |
-| 13 | [13-relational-dataset.md](13-relational-dataset.md) | **Phase 9 build:** add a relational dataset that *mirrors* the flat simulator (households, neighbor/competitor edges, interaction histories) + a graph builder with an allow-list — the foundation for RDL. |
+| 13 | [13-relational-dataset.md](13-relational-dataset.md) | **Phase 9 build (✅ built):** add a relational dataset that *mirrors* the flat simulator (households, neighbor/competitor edges, interaction histories) + a graph builder with an allow-list — the foundation for RDL. Keeps the `BanditEvent` contract via additive sidecars + an optional `household_id` column. |
 | 14 | [14-orienteering-upgrade.md](14-orienteering-upgrade.md) | **Phase 10 build (Upgrade 1):** explicit shift-time budget (OP), multi-rep routing (TOP), and real road times (OSRM) — additive, flagged, no ML. |
 | 15 | [15-risk-aware-routing.md](15-risk-aware-routing.md) | **Phase 11 build (Upgrade 3):** price doors `mean − κ·std` over the bootstrap ensemble (optional CVaR); `κ=0` is a no-op. |
 | 16 | [16-decision-focused-learning.md](16-decision-focused-learning.md) | **Phase 12 build (Upgrade 2):** train the reward model on route value (decision-aware reweighting → SPO+), behind `QModel`. |
@@ -46,7 +46,7 @@ adapt to a non-stationary world. It combines four disciplines:
 | 18 | [18-relational-deep-learning.md](18-relational-deep-learning.md) | **Phase 14 build:** a calibrated GNN `q(x,a)` behind `QModel`, ethics allow-list at the graph layer, benchmarked vs. LightGBM through the same DR gate. |
 | 19 | [19-neural-combinatorial-optimization.md](19-neural-combinatorial-optimization.md) | **Phase 15 (deferred):** an attention encoder-decoder router with OR-Tools as the test oracle — build only at fleet scale. |
 | 20 | [20-decision-focused-rdl.md](20-decision-focused-rdl.md) | **Phase 16 (deferred):** the research frontier — train the GNN end-to-end through the orienteering optimizer. |
-| 21 | [21-experiment-leaderboard.md](21-experiment-leaderboard.md) | **Phase 17 build:** the append-only experiment leaderboard that judges every phase a **lift, regression, or neutral** vs the baseline through the DR gate. |
+| 21 | [21-experiment-leaderboard.md](21-experiment-leaderboard.md) | **Phase 17 build (✅ built):** the append-only experiment leaderboard that judges every phase a **lift, regression, or neutral** vs the baseline through the DR gate. |
 
 ## Core idea in one diagram
 

@@ -11,6 +11,7 @@ contradict).
 | Reward model | [reward-model/](reward-model/) | q(x,a), LightGBM, calibration, features, allow-list |
 | Routing | [routing/](routing/) | TSP-P, distance engine, territories, bandit-weighted profit |
 | Ethics | [ethics/](ethics/) | Feature allow-list, sensitive-context cap, no oracle leak |
+| Dataset & eval | [dataset-eval/](dataset-eval/) | `dataset_mode`, relational simulator, graph builder, grading oracle, experiment leaderboard |
 
 ## Maintenance
 

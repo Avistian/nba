@@ -191,12 +191,16 @@ realized shift value vs `baseline`. The actual lift on relational data is claime
 [Phase 14](phase-14-relational-deep-learning.md). A regression here means the relational world is
 mis-calibrated against the flat one and must be fixed before RDL.
 
-## Acceptance
+## Acceptance — ✅ built
 
-- `python scripts/generate_relational_logs.py --n 5000 --seed 7` writes logs + entity tables + a
+- [x] `python scripts/generate_relational_logs.py --n 5000 --seed 7` writes logs + entity tables + a
   graph, min propensity > 0, all arms present, and a non-trivial edge count.
-- With `dataset_mode="flat"` (default) nothing changes: existing scripts, demo, and tests behave
-  identically (no new heavy deps imported).
-- Oracle isolation holds for the new module; the graph allow-list blocks geo/identity/protected
-  fields at construction.
-- `ruff` / `pyright` clean; `pytest` green.
+- [x] With `dataset_mode="flat"` (default) nothing changes: existing scripts, demo, and tests behave
+  identically (no new heavy deps imported) — verified by `tests/test_demo_dataset_modes.py`.
+- [x] Oracle isolation holds for the new module (`tests/test_ethics.py::test_no_oracle_leak` extended);
+  the graph allow-list blocks geo/identity/protected fields at construction (`tests/test_graph.py`).
+- [x] `ruff` / `pyright` clean; `pytest` green.
+- Built via `src/nba/data/relational_simulator.py`, `src/nba/data/graph.py`,
+  `scripts/generate_relational_logs.py`. Data-contract decision:
+  [decisions/2026-06-18-relational-dataset-contract.md](../decisions/2026-06-18-relational-dataset-contract.md)
+  (sidecars + optional `household_id` column; `BanditEvent` unchanged).

@@ -76,6 +76,8 @@ src/nba/
     ames.py            # ✅ Ames housing loader (+ offline synthetic fallback)
     features.py        # ✅ featurize() with ethics allow-list; frozen FEATURE_NAMES
     simulator.py       # ✅ ground-truth oracle + logging policy → logged events
+    relational_simulator.py  # ✅ relational/temporal world mirroring simulator.py (dataset_mode)
+    graph.py           # ✅ heterogeneous-graph builder + graph allow-list (numpy, no torch)
   reward/
     model.py           # ✅ RewardModel (LightGBM + isotonic), ExploitationBaseline
   ethics.py            # ✅ is_sensitive, cap_exploration, EthicalPolicy wrapper
@@ -97,15 +99,21 @@ src/nba/
     store.py           # ✅ append-only EventStore (SQLite, decisions + outcomes)
     models.py          # ✅ pydantic request/response DTOs
     app.py             # ✅ FastAPI build_app factory + production app (lifespan)
+  eval/
+    oracle.py          # ✅ dataset-aware grading oracle facade (FlatOracle/RelationalOracle)
+    metrics.py         # ✅ ExperimentMetrics + evaluate() (reuses run_demo across seeds/shifts)
+    leaderboard.py     # ✅ append-only ExperimentRecord store + lift/regression verdict
 
 scripts/
-  generate_logs.py     # ✅ simulator → data/logs.parquet
-  train_reward.py      # ✅ logs → artifacts/models (+ metrics.json)
-  evaluate_policy.py   # ✅ OPE + promotion gate CLI
-  run_demo.py          # ✅ end-to-end shift → artifacts/demo_report.json
+  generate_logs.py             # ✅ flat simulator → data/logs.parquet
+  generate_relational_logs.py  # ✅ relational simulator → data/relational/{logs,households,edges,graph}
+  train_reward.py              # ✅ logs → artifacts/models (+ metrics.json)
+  evaluate_policy.py           # ✅ OPE + promotion gate CLI
+  run_demo.py                  # ✅ end-to-end shift → artifacts/demo_report.json (dataset-aware)
+  run_experiment.py            # ✅ grade a flag config → artifacts/leaderboard.jsonl (+ .md)
 ```
 
-✅ implemented. All eight phases are complete (see [PLAN.md](PLAN.md)).
+✅ implemented. Phases 0–9 and 17 are complete (see [PLAN.md](PLAN.md)).
 
 ## 4. Core contracts
 
@@ -151,6 +159,20 @@ returning the chosen probability), `softmax` (numerically stable).
   `behavior_policy` chooses actions and **records propensity**; `generate_logs` emits a parquet of
   fully-labeled `BanditEvent`s. The oracle handles (`true_reward`, `true_best_action`) are kept
   strictly out of the learning modules.
+- **`relational_simulator.py`** mirrors `simulator.py`'s public surface but adds genuine relational/
+  temporal structure (households, neighbor + competitor edges, per-door interaction histories): the
+  latent score layers in social proof, household momentum, history fatigue, and competitor overlap on
+  top of the flat signal, and a degenerate world (no edges/history) reproduces flat `true_reward`
+  within tolerance (proven by test). Crucially, **the `BanditEvent` data contract is unchanged** — its
+  logged event stream is schema-identical, so every learner consumes it as-is. The relational
+  structure rides in **additive sidecar artifacts** under `data/relational/`
+  (`households.parquet`, `edges.parquet`, `graph.npz`) plus one optional non-model `household_id`
+  DataFrame column; `frame_to_events` ignores the extra column, so round-trips stay identical. Its
+  oracle (which takes the bound `world`) is guarded out of the learning modules just like the flat one
+  (`tests/test_ethics.py`).
+- **`graph.py`** builds a typed `HeteroGraph` from a `RelationalWorld` for the future RDL value model,
+  with node features drawn from a graph allow-list that mirrors `features.ALLOWED_FEATURES` (geo/
+  identity/protected fields excluded by construction). Pure numpy with `save_graph`/`load_graph`.
 
 ### Reward model (`reward/model.py`)
 
@@ -240,6 +262,12 @@ the system-level claims (bandit beats uniform, value beats the logging baseline,
 random, far doors dropped, propensity on every decision, API roundtrip); `tests/test_ethics.py`
 asserts the guardrails (allow-list, sensitive cap, no oracle leak).
 
+`run_demo.py` reaches the oracle only through `eval/oracle.py` (`oracle_for(settings, world=...)`),
+which returns a `FlatOracle` (a pure pass-through to `simulator`, so flat output is byte-identical) or
+a `RelationalOracle` bound to the sampled `RelationalWorld`, selected by `Settings.dataset_mode`. This
+keeps grading dataset-aware without touching any learner, and a determinism regression confirms the
+flat `seed=7` report is unchanged after the indirection.
+
 ### API (`api/`)
 
 - **`store.py`** — an **append-only** SQLite `EventStore`: a `decisions` table (one row per
@@ -296,9 +324,10 @@ uv run python scripts/generate_logs.py --n 20000 --out data/logs.parquet
 uv run python scripts/train_reward.py  --logs data/logs.parquet --out artifacts/models
 ```
 
-## 8. Improvement roadmap (planned, feature-flagged)
+## 8. Improvement roadmap (feature-flagged)
 
-Phases 9–16 implement the upgrade roadmap from
+The relational dataset (Phase 9) and the experiment leaderboard (Phase 17) are **built**; the value/
+optimizer upgrades (Phases 10–16) remain planned. Phases 9–16 implement the upgrade roadmap from
 [docs/11-improving-nba-spatio-relational-optimization.md](docs/11-improving-nba-spatio-relational-optimization.md)
 (optimizer side) and
 [docs/12-relational-deep-learning-mixin.md](docs/12-relational-deep-learning-mixin.md) (value side).
@@ -319,8 +348,12 @@ never imported on the default path.
 
 ```
 src/nba/data/
-  relational_simulator.py  # ⏳ relational/temporal ground-truth world (mirrors simulator.py)
-  graph.py                 # ⏳ heterogeneous-graph builder + graph allow-list
+  relational_simulator.py  # ✅ relational/temporal ground-truth world (mirrors simulator.py)
+  graph.py                 # ✅ heterogeneous-graph builder + graph allow-list
+eval/
+  oracle.py                # ✅ dataset-aware grading oracle facade
+  metrics.py               # ✅ common per-experiment metric set (doc 11 §10 yardsticks)
+  leaderboard.py           # ✅ append-only ExperimentRecord store + lift/regression verdict
 reward/
   graph_model.py           # ⏳ GraphRewardModel(QModel): R-GCN/GraphSAGE + isotonic calibration
   decision_focused.py      # ⏳ decision-aware reweighting + SPO+ fine-tune
@@ -329,9 +362,6 @@ routing/
   neural_router.py         # ⏳ (deferred) attention encoder-decoder router
 pipeline/
   dynamic.py               # ⏳ scenario sampling + lookahead/rollout replanning
-eval/
-  metrics.py               # ⏳ common per-experiment metric set (doc 11 §10 yardsticks)
-  leaderboard.py           # ⏳ append-only ExperimentRecord store + lift/regression verdict
 ```
 
 ### Experiment leaderboard (how every upgrade is judged)
@@ -368,7 +398,7 @@ again behind their protocols. See [PLAN.md](PLAN.md), [plans/](plans), and [docs
 | 6 | Routing / TSP-P | ✅ done |
 | 7 | Orchestrator + FastAPI service | ✅ done |
 | 8 | Demo + end-to-end + ethics verification | ✅ done |
-| 9 | Relational dataset (mirrors flat) | ⏳ planned |
+| 9 | Relational dataset (mirrors flat) | ✅ done |
 | 10 | Upgrade 1 — orienteering (budget/team/road) | ⏳ planned |
 | 11 | Upgrade 3 — risk-aware routing | ⏳ planned |
 | 12 | Upgrade 2 — decision-focused learning | ⏳ planned |
@@ -376,7 +406,7 @@ again behind their protocols. See [PLAN.md](PLAN.md), [plans/](plans), and [docs
 | 14 | Relational Deep Learning value model | ⏳ planned |
 | 15 | Upgrade 4 — neural combinatorial optimization | ⏳ deferred |
 | 16 | Decision-focused RDL | ⏳ deferred |
-| 17 | Experiment leaderboard (lift/regression eval) | ⏳ planned |
+| 17 | Experiment leaderboard (lift/regression eval) | ✅ done |
 
 See [PLAN.md](PLAN.md) and [plans/](plans) for detailed specs; notebooks in [notebooks/](notebooks)
 explore the EDA, reward-model explainability, display calibration, bandit behavior, off-policy

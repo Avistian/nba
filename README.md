@@ -26,6 +26,11 @@ uv run python scripts/train_reward.py  --logs data/logs.parquet --out artifacts/
 # off-policy-evaluate a candidate policy and gate its promotion
 uv run python scripts/evaluate_policy.py --policy ucb
 
+# (optional) generate the relational dataset + grade it on the experiment leaderboard
+uv run python scripts/generate_relational_logs.py --n 20000 --out data/relational
+uv run python scripts/run_experiment.py --baseline-only
+uv run python scripts/run_experiment.py --experiment-id phase09-relational --phase 09 --dataset relational
+
 # run the whole loop offline for one simulated shift + print the comparison report
 make demo      # = uv run python scripts/run_demo.py  (writes artifacts/demo_report.json)
 
@@ -69,7 +74,7 @@ with ethics guardrails and a system-level verification suite.
 | 6 | Routing / TSP-with-profits | done |
 | 7 | Orchestrator + FastAPI + event store | done |
 | 8 | Demo + end-to-end + ethics verification | done |
-| 9 | Relational dataset (mirrors flat, `dataset_mode`) | planned |
+| 9 | Relational dataset (mirrors flat, `dataset_mode`) | done |
 | 10 | Upgrade 1 — orienteering (budget / team / road) | planned |
 | 11 | Upgrade 3 — risk-aware routing | planned |
 | 12 | Upgrade 2 — decision-focused learning | planned |
@@ -77,7 +82,7 @@ with ethics guardrails and a system-level verification suite.
 | 14 | Relational Deep Learning value model | planned |
 | 15 | Upgrade 4 — neural combinatorial optimization | deferred |
 | 16 | Decision-focused RDL (research frontier) | deferred |
-| 17 | Experiment leaderboard (lift/regression eval) | planned |
+| 17 | Experiment leaderboard (lift/regression eval) | done |
 
 ## Roadmap & feature flags
 
@@ -88,22 +93,31 @@ Phases 9–16 extend the verified loop with the upgrades from
 - **Every upgrade is a feature flag, off by default.** Each adds `NBA_*` settings whose defaults
   reproduce today's behavior exactly (e.g. `NBA_DATASET_MODE=flat`, `NBA_RISK_KAPPA=0.0`,
   `NBA_REWARD_MODEL_KIND=lightgbm`), so the verified pipeline is untouched until you opt in.
-- **The dataset becomes relational first**, added as a *new* dataset that mirrors the flat
-  simulator's `BanditEvent` stream — the prerequisite for the Relational Deep Learning value model,
-  benchmarked head-to-head against LightGBM through the same OPE gate.
-- **Every upgrade is tested and proves itself on a logged leaderboard.** Built right after the
-  relational dataset and before the upgrades (order: **9 → 17 → 10–16**), Phase 17 adds an
-  append-only `artifacts/leaderboard.jsonl`: each flag config is scored against the baseline and
-  judged a **lift, regression, or neutral**, where a lift requires both a higher realized shift value
-  and clearing the DR gate, and a regression blocks adoption. `scripts/run_experiment.py` records and
-  prints the board.
+- **The dataset becomes relational first** (Phase 9, **built**), added as a *new* dataset that mirrors
+  the flat simulator's `BanditEvent` stream — the prerequisite for the Relational Deep Learning value
+  model, benchmarked head-to-head against LightGBM through the same OPE gate. The relational structure
+  (households, neighbor/competitor edges, interaction histories) rides in **additive sidecar
+  artifacts** (`data/relational/{households,edges}.parquet`, `graph.npz`) plus one optional non-model
+  `household_id` column, so the `BanditEvent` data contract is **unchanged** and every existing learner
+  consumes relational logs as-is.
+- **Every upgrade is tested and proves itself on a logged leaderboard** (Phase 17, **built**). Built
+  right after the relational dataset and before the upgrades (order: **9 → 17 → 10–16**), Phase 17 adds
+  an append-only `artifacts/leaderboard.jsonl` (+ `leaderboard.md`): each flag config is scored against
+  the baseline and judged a **lift, regression, or neutral**, where a lift requires both a higher
+  realized shift value and clearing the DR gate, and a regression blocks adoption.
+  `scripts/run_experiment.py` records and prints the board.
 
 See [PLAN.md](PLAN.md) for the phase list, [plans/](plans) for per-phase specs
 (`phase-09`…`phase-16`), and [docs/](docs) for the step-by-step build docs (`13`…`20`).
 
-Notebooks in [notebooks/](notebooks) mirror each phase: EDA, reward-model explainability, display
-calibration, bandit behavior, off-policy evaluation, TSP-with-profits routing, the orchestrator/API
-loop, and the [end-to-end demo](notebooks/end_to_end_demo.ipynb).
+Notebooks in [notebooks/](notebooks) mirror each phase and are **parametrized**: a single
+`DATASET_MODE = "flat" | "relational"` cell at the top switches each notebook between the flat and the
+relational dataset (resolving the log path, the trained model, and the grading oracle). They cover
+EDA, reward-model explainability, display calibration, bandit behavior, off-policy evaluation,
+TSP-with-profits routing, the orchestrator/API loop, the
+[end-to-end demo](notebooks/end_to_end_demo.ipynb), and a relational-structure EDA
+(`relational_structure_eda.ipynb`). The original (pre-parametrization) notebooks are preserved
+unchanged in [notebooks/old/](notebooks/old).
 
 ## Toolchain
 

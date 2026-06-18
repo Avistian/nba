@@ -38,7 +38,46 @@ and add categories as the project evolves.
 
 **Source:** ARCHITECTURE.md §2, decisions/2026-06-01-oracle-isolation.md
 
-**Last triggered:** never (enforced continuously; no violation since Phase 8)
+**Last triggered:** 2026-06-18 (Phase 9 — guard prefix `nba.data.sim` would have missed
+`relational_simulator`; extended to also match it so the relational oracle stays isolated)
+
+---
+
+## Category: Dataset contract & backward compatibility
+
+**Severity:** blocking
+
+**Criteria:**
+
+- [ ] A new dataset emits a **schema-identical** `BanditEvent` stream (no new fields on
+      `BanditEvent` / `ProspectContext`; `extra="forbid"` preserved)
+- [ ] Extra structure rides in additive sidecars / optional non-model DataFrame columns that
+      `frame_to_events` ignores; round-trip stays identical
+- [ ] `dataset_mode="flat"` (default) path is byte-identical — verified by a determinism regression
+      (`tests/test_demo_dataset_modes.py`); no new heavy deps imported on the default path
+- [ ] A degenerate new world reproduces the flat oracle within tolerance
+- [ ] Graph node/edge features stay on the allow-list mirroring `features.ALLOWED_FEATURES`
+
+**Source:** knowledge/dataset-eval/rules.md R1–R4, decisions/2026-06-18-relational-dataset-contract.md
+
+**Last triggered:** 2026-06-18 (Phase 9 relational dataset)
+
+---
+
+## Category: Experiment leaderboard
+
+**Severity:** warning
+
+**Criteria:**
+
+- [ ] `leaderboard.jsonl` stays append-only (corrections are new rows)
+- [ ] A **lift** requires both a primary-metric gain and clearing the DR gate; deltas sign-normalized
+- [ ] A new dataset substrate (model/router unchanged) is graded **neutral / non-regression**, not a lift
+- [ ] Grading reaches the oracle only via `eval/oracle.py` (`oracle_for`), never a learner import
+
+**Source:** knowledge/dataset-eval/rules.md R5–R6, decisions/2026-06-18-dataset-aware-grading-oracle.md
+
+**Last triggered:** 2026-06-18 (Phase 17 leaderboard)
 
 ---
 
@@ -135,7 +174,8 @@ and add categories as the project evolves.
 
 **Source:** AGENTS.md knowledge architecture
 
-**Last triggered:** 2026-06-13 (AGENTS.md bootstrap)
+**Last triggered:** 2026-06-18 (Phase 9 + 17 — README/ARCHITECTURE/PLAN/docs updated, two decisions
+logged, dataset-eval knowledge domain added)
 
 ---
 

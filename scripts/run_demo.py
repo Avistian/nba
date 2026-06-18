@@ -34,15 +34,14 @@ from nba.bandits.epsilon_greedy import EpsilonGreedy
 from nba.bandits.thompson import BootstrapEnsemble, ThompsonSampling
 from nba.bandits.ucb import UCB
 from nba.config import Settings, get_settings
+from nba.data import relational_simulator as rel
 from nba.data.ames import load_ames
 from nba.data.simulator import (
     generate_logs,
     sample_context,
-    sample_outcome,
-    true_best_action,
-    true_reward,
 )
 from nba.ethics import EthicalPolicy
+from nba.eval.oracle import oracle_for
 from nba.ope.estimators import LoggedBatch, q_matrix
 from nba.ope.gate import PromotionGate
 from nba.pipeline.orchestrator import Orchestrator
@@ -195,8 +194,12 @@ def run_demo(
     """Run the full offline loop for one shift and return a :class:`DemoReport`."""
     settings = (settings or get_settings()).model_copy(update={"seed": seed})
 
-    # 1. Logs → train / held-out split.
-    events = generate_logs(n_logs, settings=settings, seed=seed)
+    # 1. Logs → train / held-out split. (Relational mode swaps the simulator behind the flag;
+    #    flat mode — the default — is byte-identical to before.)
+    if settings.dataset_mode == "relational":
+        events, _ = rel.generate_logs(n_logs, settings=settings, seed=seed)
+    else:
+        events = generate_logs(n_logs, settings=settings, seed=seed)
     rng = np.random.default_rng(seed)
     perm = rng.permutation(len(events))
     n_val = max(50, len(events) // 5)
@@ -239,6 +242,13 @@ def run_demo(
     from nba.api.store import EventStore  # local import keeps module import cheap
 
     contexts = _dense_block(shift, settings, seed + 1)
+    # Grading oracle for this shift. In relational mode we rebuild the world over the *repositioned*
+    # doors so neighbor edges (and thus social proof) stay consistent with the new geography.
+    if settings.dataset_mode == "relational":
+        world = rel.world_from_contexts(contexts, settings=settings, seed=seed + 1)
+        oracle = oracle_for(settings, world=world)
+    else:
+        oracle = oracle_for(settings)
     store = EventStore(settings.db_path)
     policy = EthicalPolicy(selected, settings, rng=np.random.default_rng(seed + 2))
     orch = Orchestrator(
@@ -276,12 +286,12 @@ def run_demo(
     while order:
         door = order.pop(0)
         result = orch.recommend(door)
-        outcome = sample_outcome(door, result.action, sim_rng)
+        outcome = oracle.sample_outcome(door, result.action, sim_rng)
         orch.feedback(result.decision_id, outcome)
 
         realized += REWARD[outcome]
-        chosen_value = true_reward(door, result.action)
-        best_value = true_reward(door, true_best_action(door))
+        chosen_value = oracle.true_reward(door, result.action)
+        best_value = oracle.true_reward(door, oracle.true_best_action(door))
         cum_regret += best_value - chosen_value
         regret_curve.append(cum_regret)
         chosen_true.append(chosen_value)
@@ -296,8 +306,10 @@ def run_demo(
 
     # 6. Baselines on the *same* serviced doors (expected reward, oracle, eval-only).
     bandit_expected = float(sum(chosen_true))
-    uniform_expected = float(sum(np.mean([true_reward(c, a) for a in ACTIONS]) for c in serviced))
-    exploit_expected = float(sum(true_reward(c, model.best_action(c)) for c in serviced))
+    uniform_expected = float(
+        sum(np.mean([oracle.true_reward(c, a) for a in ACTIONS]) for c in serviced)
+    )
+    exploit_expected = float(sum(oracle.true_reward(c, model.best_action(c)) for c in serviced))
     avg_regret_curve = [r / (i + 1) for i, r in enumerate(regret_curve)]
 
     stored = store.load_events()

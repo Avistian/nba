@@ -13,3 +13,5 @@ more than today's task.
 | 2026-06-12 | Regret claim: stationary vs decreasing | [2026-06-12-regret-claim-stationary.md](2026-06-12-regret-claim-stationary.md) |
 | 2026-06-12 | Sensitive-context exploration cap | [2026-06-12-sensitive-exploration-cap.md](2026-06-12-sensitive-exploration-cap.md) |
 | 2026-06-18 | Feature-flagged improvement roadmap; relational dataset first | [2026-06-18-feature-flagged-relational-upgrades.md](2026-06-18-feature-flagged-relational-upgrades.md) |
+| 2026-06-18 | Relational dataset keeps the BanditEvent contract (sidecars + `household_id`) | [2026-06-18-relational-dataset-contract.md](2026-06-18-relational-dataset-contract.md) |
+| 2026-06-18 | Dataset-aware grading through an oracle facade | [2026-06-18-dataset-aware-grading-oracle.md](2026-06-18-dataset-aware-grading-oracle.md) |

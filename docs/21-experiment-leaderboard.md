@@ -12,6 +12,15 @@ and the relational datasets, and every later upgrade (Phases 10-16) must record 
 **no regressions** — before it is adopted. (Its file number is 17, but its build order is fixed by its
 dependency on Phase 9, the same way Phase 6 is built "parallel with 3-5".)
 
+> **Status: built.** Ships `src/nba/eval/{oracle,metrics,leaderboard}.py` and
+> `scripts/run_experiment.py`, with `tests/test_eval_metrics.py`, `tests/test_leaderboard.py`, and
+> `tests/test_demo_dataset_modes.py`. The shipped `artifacts/leaderboard.jsonl` (+ `leaderboard.md`)
+> carries the `baseline` and a `phase09-relational` row — the latter a deliberate **neutral**, since
+> the relational dataset is a substrate, not a value change. Grading reaches the oracle only through
+> the dataset-aware `eval/oracle.py` facade (see
+> [decisions/2026-06-18-dataset-aware-grading-oracle.md](../decisions/2026-06-18-dataset-aware-grading-oracle.md)),
+> so the flat pipeline stays byte-identical.
+
 ```
 Phase 9 (relational dataset)  ->  this leaderboard  ->  Phases 10-16, each tested + proven here
 ```
