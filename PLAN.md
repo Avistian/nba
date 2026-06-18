@@ -37,6 +37,14 @@ policy is promoted. **The bandit proposes, the router disposes.**
 3. Thompson uncertainty: **bootstrap LightGBM ensemble** (reuses the reward model).
 4. Ethics: **feature allow-list** (no protected/geo fields) + a **sensitive-context exploration
    cap** (`EthicalPolicy`) that preserves full support so logs stay OPE-valid.
+5. **Improvement roadmap is feature-flag-first.** Every upgrade in Phases 9–16 (the
+   [docs/11](docs/11-improving-nba-spatio-relational-optimization.md) /
+   [docs/12](docs/12-relational-deep-learning-mixin.md) work) ships behind an `NBA_*` flag that
+   **defaults to today's behavior**, so the verified 0–8 loop is untouched until a flag is set.
+6. **The relational dataset mirrors the flat one.** It is added as a *new* dataset
+   (`dataset_mode="relational"`) emitting a schema-identical `BanditEvent` stream, not a rewrite of
+   the existing simulator — so RDL can be benchmarked head-to-head against LightGBM and abandoned
+   cleanly if it doesn't win the OPE gate.
 
 ## Package layout (to create)
 
@@ -104,6 +112,70 @@ route → compare vs baselines → report), writing `artifacts/demo_report.json`
 asserts the system-level claims and `tests/test_ethics.py` the guardrails; `src/nba/ethics.py` adds
 the sensitive-context exploration cap.
 
+## Improvement phases (planned, feature-flagged)
+
+Phases 9–16 implement the upgrade roadmap from
+[docs/11](docs/11-improving-nba-spatio-relational-optimization.md) and
+[docs/12](docs/12-relational-deep-learning-mixin.md). Each is **off by default** behind an `NBA_*`
+flag and preserves every rail (no oracle leak, ethics allow-list, calibration, DR promotion gate).
+Per-phase specs live in [plans/](plans); step-by-step build docs in [docs/](docs).
+
+**Build order: relational dataset → leaderboard → upgrades.** The relational dataset (Phase 9) is
+built first; the experiment leaderboard (Phase 17) is built **right after it** so it can grade
+experiments on both the flat and relational datasets; then each upgrade (Phases 10-16) must be tested
+**and prove its value** on that leaderboard before adoption. (Phase numbers are stable IDs — like
+Phase 6 "parallel with 3-5", build order follows dependencies, not the file number.)
+
+**Every upgrade must be tested and prove itself on the leaderboard.** Phase 17 adds an append-only
+experiment leaderboard ([plan](plans/phase-17-experiment-leaderboard.md) ·
+[doc](docs/21-experiment-leaderboard.md)): each flag config is run against the `baseline` (all flags
+off = today's pipeline) and judged a **lift, regression, or neutral** on a common metric set. A
+**lift requires both a higher primary metric (realized shift value) and clearing the same DR gate** —
+so wins can't be noise — and a **regression blocks the upgrade's adoption**. Each phase below names
+its leaderboard experiment(s) in its plan file, and is not "done" until it has passing tests **and** a
+logged leaderboard row that is a lift or a deliberate, documented neutral.
+
+### Phase 9 — Relational dataset *(depends 1, 2)* — [plan](plans/phase-09-relational-dataset.md) · [doc](docs/13-relational-dataset.md)
+A **new dataset that mirrors** the flat simulator (`dataset_mode`) but with genuine relational/
+temporal ground truth (households, neighbor/competitor edges, interaction histories) and a
+heterogeneous-graph builder behind a graph allow-list. Emits a schema-identical `BanditEvent` stream
+so all downstream code is unchanged. **Foundation for RDL.**
+
+### Phase 10 — Upgrade 1: Orienteering *(depends 6)* — [plan](plans/phase-10-orienteering.md) · [doc](docs/14-orienteering-upgrade.md)
+Explicit shift-time budget (OP), multi-rep routing (TOP), and a real `OSRMEngine` — additive params
+on `solve_tsp_profits`, flags `use_time_budget`/`shift_hours`, `num_vehicles`, `distance_engine`.
+
+### Phase 11 — Upgrade 3: Risk-aware routing *(depends 4, 7)* — [plan](plans/phase-11-risk-aware-routing.md) · [doc](docs/15-risk-aware-routing.md)
+Price doors `mean − κ·std` over the bootstrap ensemble (optional CVaR); flags
+`use_risk_aware_routing`, `risk_kappa` (`κ=0` is a no-op).
+
+### Phase 12 — Upgrade 2: Decision-focused learning *(depends 3, 5, 6)* — [plan](plans/phase-12-decision-focused-learning.md) · [doc](docs/16-decision-focused-learning.md)
+Train the reward model on **route value** not prediction error: decision-aware reweighting, then an
+SPO+ fine-tune behind the `QModel` protocol; flags `use_decision_focused`, `df_mode`.
+
+### Phase 13 — Upgrade 5: Dynamic/stochastic routing *(depends 7, 11)* — [plan](plans/phase-13-dynamic-stochastic-routing.md) · [doc](docs/17-dynamic-stochastic-routing.md)
+Stochastic prizes + optional lookahead/rollout replanning on top of `replan`; flags
+`use_stochastic_prizes`, `use_lookahead`.
+
+### Phase 14 — RDL value model *(depends 9, 3, 5)* — [plan](plans/phase-14-relational-deep-learning.md) · [doc](docs/18-relational-deep-learning.md)
+A calibrated R-GCN/GraphSAGE `q(x,a)` behind the `QModel` protocol over the Phase 9 graph (optional
+`rdl` extra); flag `reward_model_kind`. Promotes only if it beats LightGBM through the same DR gate.
+
+### Phase 15 — Upgrade 4: Neural CO *(deferred)* — [plan](plans/phase-15-neural-combinatorial-optimization.md) · [doc](docs/19-neural-combinatorial-optimization.md)
+Attention encoder-decoder router behind a `Router` protocol with OR-Tools as the test oracle; flag
+`router_kind`. Build only at fleet scale.
+
+### Phase 16 — Decision-focused RDL *(deferred)* — [plan](plans/phase-16-decision-focused-rdl.md) · [doc](docs/20-decision-focused-rdl.md)
+The research frontier: train the GNN end-to-end through the orienteering optimizer (fuses Phases 12 +
+14); flag `use_decision_focused_rdl`.
+
+### Phase 17 — Experiment leaderboard *(depends 9, 5, 8; built right after Phase 9, before the upgrades)* — [plan](plans/phase-17-experiment-leaderboard.md) · [doc](docs/21-experiment-leaderboard.md)
+The cross-cutting evaluation harness for Phases 10–16: `src/nba/eval/{metrics,leaderboard}.py` +
+`scripts/run_experiment.py` write an **append-only** `artifacts/leaderboard.jsonl` recording each
+experiment's flags, metrics, per-metric delta vs `baseline`, DR-gate result, and **lift/regression/
+neutral** verdict. Built immediately after the relational dataset (so it can grade on both datasets)
+and before any upgrade, which must each prove value here.
+
 ## Verification matrix
 
 | Claim | Where | State |
@@ -120,6 +192,16 @@ the sensitive-context exploration cap.
 | No protected/geo attributes in features | `tests/test_ethics.py` | ✅ |
 | Exploration capped in sensitive contexts | `tests/test_ethics.py` | ✅ |
 | No oracle leakage into learning modules | `tests/test_ethics.py::test_no_oracle_leak` | ✅ |
+| Relational dataset mirrors flat (schema round-trip; degenerate==flat) | `tests/test_relational_simulator.py` (Phase 9) | ⏳ planned |
+| Graph allow-list blocks geo/identity/protected at node+edge | `tests/test_graph.py` (Phase 9) | ⏳ planned |
+| Budgeted route ≤ shift budget; team route never double-serves | `tests/test_routing.py` (Phase 10) | ⏳ planned |
+| All upgrade flags off reproduce today's behavior exactly | per-phase tests (Phases 9–16) | ⏳ planned |
+| Risk-aware routing reduces realized-value variance (κ=0 no-op) | `tests/test_orchestrator.py` (Phase 11) | ⏳ planned |
+| Decision-focused model lowers decision regret at ≥ OPE | `tests/test_decision_focused.py` (Phase 12) | ⏳ planned |
+| Stochastic prizes shrink downside risk | `tests/test_dynamic.py` (Phase 13) | ⏳ planned |
+| RDL model promotes only via the same DR gate on route value | `tests/test_graph_model.py` (Phase 14) | ⏳ planned |
+| Every phase logs a lift/regression leaderboard row vs baseline | `tests/test_leaderboard.py` (Phase 17) | ⏳ planned |
+| Leaderboard is append-only; lift requires primary-metric gain + DR gate | `tests/test_leaderboard.py` (Phase 17) | ⏳ planned |
 
 † The PLAN originally framed this as "cumulative regret trends down." That downward *curve* is an
 **online-learning** phenomenon (the model improving across many rounds). A single deployed shift

@@ -296,7 +296,66 @@ uv run python scripts/generate_logs.py --n 20000 --out data/logs.parquet
 uv run python scripts/train_reward.py  --logs data/logs.parquet --out artifacts/models
 ```
 
-## 8. Status
+## 8. Improvement roadmap (planned, feature-flagged)
+
+Phases 9–16 implement the upgrade roadmap from
+[docs/11-improving-nba-spatio-relational-optimization.md](docs/11-improving-nba-spatio-relational-optimization.md)
+(optimizer side) and
+[docs/12-relational-deep-learning-mixin.md](docs/12-relational-deep-learning-mixin.md) (value side).
+They are **additive and reversible**: each lives behind an `NBA_*` flag whose default reproduces
+today's behavior, and each preserves every rail in §2 (oracle isolation, ethics allow-list,
+calibration, propensity/overlap, the DR promotion gate).
+
+### Feature flags (a new cross-cutting concern)
+
+Every upgrade is gated by `Settings` flags that default to the current behavior, so the verified 0–8
+loop is byte-identical until a flag is set. Examples: `dataset_mode="flat"`,
+`use_time_budget=False`/`num_vehicles=1`/`distance_engine="haversine"`, `risk_kappa=0.0`,
+`use_decision_focused=False`, `use_stochastic_prizes=False`, `reward_model_kind="lightgbm"`,
+`router_kind="ortools"`. Heavy deps (PyTorch/PyG for RDL, the neural router) are **optional extras**,
+never imported on the default path.
+
+### Planned modules (additive to the §3 map)
+
+```
+src/nba/data/
+  relational_simulator.py  # ⏳ relational/temporal ground-truth world (mirrors simulator.py)
+  graph.py                 # ⏳ heterogeneous-graph builder + graph allow-list
+reward/
+  graph_model.py           # ⏳ GraphRewardModel(QModel): R-GCN/GraphSAGE + isotonic calibration
+  decision_focused.py      # ⏳ decision-aware reweighting + SPO+ fine-tune
+routing/
+  base.py                  # ⏳ Router protocol (OR-Tools + neural share it)
+  neural_router.py         # ⏳ (deferred) attention encoder-decoder router
+pipeline/
+  dynamic.py               # ⏳ scenario sampling + lookahead/rollout replanning
+eval/
+  metrics.py               # ⏳ common per-experiment metric set (doc 11 §10 yardsticks)
+  leaderboard.py           # ⏳ append-only ExperimentRecord store + lift/regression verdict
+```
+
+### Experiment leaderboard (how every upgrade is judged)
+
+Phase 17 adds a cross-cutting **evaluation harness** so each flag config is measured, not assumed. It
+is built **right after the relational dataset (Phase 9)** — so experiments can be graded on both the
+flat and relational datasets — and **before the upgrades (Phases 10-16)**, each of which must prove
+its value here. `scripts/run_experiment.py` runs a named flag config over many simulated shifts,
+scores it with `eval.metrics.evaluate`, and appends one row to `artifacts/leaderboard.jsonl` via
+`eval.leaderboard.record_experiment`. Each row carries the flags, the metrics, the per-metric delta
+vs the `baseline` (all flags off), the **DR-gate result** (reusing `ope/gate.py`), and a
+**lift / regression / neutral** verdict. The store is **append-only** like `api/store.py` — results
+are facts, never overwritten — and the oracle is used for grading only, never for serving. A *lift*
+requires both a higher primary metric (realized shift value) and clearing the gate, so the board can't
+be gamed by noise; a **regression blocks the upgrade's adoption**. The build order is therefore
+**9 → 17 → 10-16**, and each upgrade phase names its leaderboard experiment(s) in its plan file.
+
+The relational dataset feeds a GNN value model that still speaks the **`QModel` protocol**, so the
+bandit, OPE, router, API, and ethics layers are unchanged — RDL replaces exactly one box (the reward
+model) and is benchmarked head-to-head against LightGBM through the same DR gate. The orienteering,
+risk-aware, decision-focused, and dynamic upgrades touch only the router and the reward-model training,
+again behind their protocols. See [PLAN.md](PLAN.md), [plans/](plans), and [docs/](docs) (13–20).
+
+## 9. Status
 
 | Phase | Area | State |
 |------:|------|-------|
@@ -309,6 +368,15 @@ uv run python scripts/train_reward.py  --logs data/logs.parquet --out artifacts/
 | 6 | Routing / TSP-P | ✅ done |
 | 7 | Orchestrator + FastAPI service | ✅ done |
 | 8 | Demo + end-to-end + ethics verification | ✅ done |
+| 9 | Relational dataset (mirrors flat) | ⏳ planned |
+| 10 | Upgrade 1 — orienteering (budget/team/road) | ⏳ planned |
+| 11 | Upgrade 3 — risk-aware routing | ⏳ planned |
+| 12 | Upgrade 2 — decision-focused learning | ⏳ planned |
+| 13 | Upgrade 5 — dynamic/stochastic routing | ⏳ planned |
+| 14 | Relational Deep Learning value model | ⏳ planned |
+| 15 | Upgrade 4 — neural combinatorial optimization | ⏳ deferred |
+| 16 | Decision-focused RDL | ⏳ deferred |
+| 17 | Experiment leaderboard (lift/regression eval) | ⏳ planned |
 
 See [PLAN.md](PLAN.md) and [plans/](plans) for detailed specs; notebooks in [notebooks/](notebooks)
 explore the EDA, reward-model explainability, display calibration, bandit behavior, off-policy

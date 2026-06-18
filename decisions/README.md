@@ -12,3 +12,4 @@ more than today's task.
 | 2026-06-01 | Feature allow-list ethics | [2026-06-01-feature-allow-list.md](2026-06-01-feature-allow-list.md) |
 | 2026-06-12 | Regret claim: stationary vs decreasing | [2026-06-12-regret-claim-stationary.md](2026-06-12-regret-claim-stationary.md) |
 | 2026-06-12 | Sensitive-context exploration cap | [2026-06-12-sensitive-exploration-cap.md](2026-06-12-sensitive-exploration-cap.md) |
+| 2026-06-18 | Feature-flagged improvement roadmap; relational dataset first | [2026-06-18-feature-flagged-relational-upgrades.md](2026-06-18-feature-flagged-relational-upgrades.md) |

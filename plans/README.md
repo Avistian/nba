@@ -18,6 +18,23 @@ phase can be implemented (TDD) without re-deriving design.
 | 6 | [phase-06-routing.md](phase-06-routing.md) | 1 (∥ 3–5) | Haversine + OR-Tools TSP-with-Profits |
 | 7 | [phase-07-orchestrator-api.md](phase-07-orchestrator-api.md) | 4, 6 | Orchestrator + FastAPI + event store |
 | 8 | [phase-08-demo-verification.md](phase-08-demo-verification.md) | 7 | Full-shift demo + cross-module verification |
+| 9 | [phase-09-relational-dataset.md](phase-09-relational-dataset.md) | 1, 2 | Relational dataset (mirrors flat) + graph builder |
+| 10 | [phase-10-orienteering.md](phase-10-orienteering.md) | 6 | Upgrade 1: time budget + team + road-aware (OSRM) |
+| 11 | [phase-11-risk-aware-routing.md](phase-11-risk-aware-routing.md) | 4, 7 | Upgrade 3: risk-aware door pricing (mean − κ·std) |
+| 12 | [phase-12-decision-focused-learning.md](phase-12-decision-focused-learning.md) | 3, 5, 6 | Upgrade 2: decision-focused learning (SPO+) |
+| 13 | [phase-13-dynamic-stochastic-routing.md](phase-13-dynamic-stochastic-routing.md) | 7, 11 | Upgrade 5: stochastic prizes + lookahead replan |
+| 14 | [phase-14-relational-deep-learning.md](phase-14-relational-deep-learning.md) | 9, 3, 5 | RDL value model (GNN behind `QModel`) |
+| 15 | [phase-15-neural-combinatorial-optimization.md](phase-15-neural-combinatorial-optimization.md) | 10 (∥ 14) | Upgrade 4: neural CO router (deferred) |
+| 16 | [phase-16-decision-focused-rdl.md](phase-16-decision-focused-rdl.md) | 12, 14 | Decision-focused RDL fusion (deferred) |
+| 17 | [phase-17-experiment-leaderboard.md](phase-17-experiment-leaderboard.md) | 9, 5, 8 (after Phase 9, before upgrades) | Append-only leaderboard: lift/regression per experiment |
+
+Phases 9–16 are the improvement roadmap from [../docs/11](../docs/11-improving-nba-spatio-relational-optimization.md)
+and [../docs/12](../docs/12-relational-deep-learning-mixin.md): each is **feature-flagged, off by
+default**, and preserves every rail. The relational dataset (Phase 9) is built first as a new dataset
+that mirrors the flat one. Phase 17 is the **evaluation harness** that grades every other phase as a
+**lift, regression, or neutral** on an append-only leaderboard — built **right after Phase 9** (so it
+can grade on both datasets) and **before the upgrades**, each of which must be tested and prove its
+value here (a regression blocks adoption). Build order: **9 → 17 → 10–16**.
 
 ## Architecture through-line
 
@@ -42,7 +59,9 @@ policy is promoted. **The bandit proposes, the router disposes.**
 - **Oracle hygiene:** the simulator's `true_reward` is the *only* ground-truth oracle; it must
   never leak into features, the reward model, or any policy.
 - **Definition of Done (per phase):** code + tests written TDD-style; `ruff` and `pyright` clean;
-  `pytest` green; every acceptance check in the phase file passes.
+  `pytest` green; every acceptance check in the phase file passes. **For Phases 10–16 (each upgrade):
+  additionally a logged Phase 17 leaderboard row vs `baseline` that is a lift or a documented neutral
+  — a regression blocks adoption.**
 
 ## How to use
 

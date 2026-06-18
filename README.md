@@ -69,6 +69,37 @@ with ethics guardrails and a system-level verification suite.
 | 6 | Routing / TSP-with-profits | done |
 | 7 | Orchestrator + FastAPI + event store | done |
 | 8 | Demo + end-to-end + ethics verification | done |
+| 9 | Relational dataset (mirrors flat, `dataset_mode`) | planned |
+| 10 | Upgrade 1 — orienteering (budget / team / road) | planned |
+| 11 | Upgrade 3 — risk-aware routing | planned |
+| 12 | Upgrade 2 — decision-focused learning | planned |
+| 13 | Upgrade 5 — dynamic / stochastic routing | planned |
+| 14 | Relational Deep Learning value model | planned |
+| 15 | Upgrade 4 — neural combinatorial optimization | deferred |
+| 16 | Decision-focused RDL (research frontier) | deferred |
+| 17 | Experiment leaderboard (lift/regression eval) | planned |
+
+## Roadmap & feature flags
+
+Phases 9–16 extend the verified loop with the upgrades from
+[docs/11](docs/11-improving-nba-spatio-relational-optimization.md) (optimizer side) and
+[docs/12](docs/12-relational-deep-learning-mixin.md) (value side). Two principles govern all of them:
+
+- **Every upgrade is a feature flag, off by default.** Each adds `NBA_*` settings whose defaults
+  reproduce today's behavior exactly (e.g. `NBA_DATASET_MODE=flat`, `NBA_RISK_KAPPA=0.0`,
+  `NBA_REWARD_MODEL_KIND=lightgbm`), so the verified pipeline is untouched until you opt in.
+- **The dataset becomes relational first**, added as a *new* dataset that mirrors the flat
+  simulator's `BanditEvent` stream — the prerequisite for the Relational Deep Learning value model,
+  benchmarked head-to-head against LightGBM through the same OPE gate.
+- **Every upgrade is tested and proves itself on a logged leaderboard.** Built right after the
+  relational dataset and before the upgrades (order: **9 → 17 → 10–16**), Phase 17 adds an
+  append-only `artifacts/leaderboard.jsonl`: each flag config is scored against the baseline and
+  judged a **lift, regression, or neutral**, where a lift requires both a higher realized shift value
+  and clearing the DR gate, and a regression blocks adoption. `scripts/run_experiment.py` records and
+  prints the board.
+
+See [PLAN.md](PLAN.md) for the phase list, [plans/](plans) for per-phase specs
+(`phase-09`…`phase-16`), and [docs/](docs) for the step-by-step build docs (`13`…`20`).
 
 Notebooks in [notebooks/](notebooks) mirror each phase: EDA, reward-model explainability, display
 calibration, bandit behavior, off-policy evaluation, TSP-with-profits routing, the orchestrator/API
