@@ -9,8 +9,9 @@
 Build this **right after the relational dataset** ([Phase 9](13-relational-dataset.md)) and **before
 any upgrade is graded**: it is sequenced after Phase 9 so experiments can be scored on both the flat
 and the relational datasets, and every later upgrade (Phases 10-16) must record a lift/neutral row —
-**no regressions** — before it is adopted. (Its file number is 17, but its build order is fixed by its
-dependency on Phase 9, the same way Phase 6 is built "parallel with 3-5".)
+**no regressions** — before it is adopted. [Phase 18](22-drift-monitoring-retrain-loop.md) (drift
+monitor + conditional retrain) follows this leaderboard. (Its file number is 17, but its build order
+is fixed by its dependency on Phase 9, the same way Phase 6 is built "parallel with 3-5".)
 
 > **Status: built.** Ships `src/nba/eval/{oracle,metrics,leaderboard}.py` and
 > `scripts/run_experiment.py`, with `tests/test_eval_metrics.py`, `tests/test_leaderboard.py`, and
@@ -22,7 +23,7 @@ dependency on Phase 9, the same way Phase 6 is built "parallel with 3-5".)
 > so the flat pipeline stays byte-identical.
 
 ```
-Phase 9 (relational dataset)  ->  this leaderboard  ->  Phases 10-16, each tested + proven here
+Phase 9 (relational dataset)  ->  this leaderboard  ->  Phase 18 (drift loop)  ->  Phases 10-16, each tested + proven here
 ```
 
 ## 1. The problem it solves

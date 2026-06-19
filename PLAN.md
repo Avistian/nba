@@ -120,11 +120,13 @@ Phases 9–16 implement the upgrade roadmap from
 flag and preserves every rail (no oracle leak, ethics allow-list, calibration, DR promotion gate).
 Per-phase specs live in [plans/](plans); step-by-step build docs in [docs/](docs).
 
-**Build order: relational dataset → leaderboard → upgrades.** The relational dataset (Phase 9) is
-built first; the experiment leaderboard (Phase 17) is built **right after it** so it can grade
-experiments on both the flat and relational datasets; then each upgrade (Phases 10-16) must be tested
-**and prove its value** on that leaderboard before adoption. (Phase numbers are stable IDs — like
-Phase 6 "parallel with 3-5", build order follows dependencies, not the file number.)
+**Build order: relational dataset → leaderboard → drift loop → upgrades.** The relational dataset
+(Phase 9) is built first; the experiment leaderboard (Phase 17) is built **right after it** so it can
+grade experiments on both the flat and relational datasets; Phase 18 adds **drift monitoring and
+conditional retraining** (serve frozen, retrain only when signals fire, promote through the DR gate);
+then each upgrade (Phases 10-16) must be tested **and prove its value** on that leaderboard before
+adoption. (Phase numbers are stable IDs — like Phase 6 "parallel with 3-5", build order follows
+dependencies, not the file number.)
 
 **Every upgrade must be tested and prove itself on the leaderboard.** Phase 17 adds an append-only
 experiment leaderboard ([plan](plans/phase-17-experiment-leaderboard.md) ·
@@ -182,6 +184,15 @@ and before any upgrade, which must each prove value here. Grading reaches the or
 the `baseline` and a `phase09-relational` row (a deliberate **neutral** — the dataset is a substrate,
 not a value change).
 
+### Phase 18 — Drift monitoring + conditional retraining loop *(depends 3, 5, 7, 8, 17; built after Phase 17, before/up parallel with upgrades)* — [plan](plans/phase-18-drift-monitoring-retrain-loop.md) · [doc](docs/22-drift-monitoring-retrain-loop.md)
+The **operational ML loop** missing from the teaching demos: serve with a **frozen** deployed model,
+score drift on append-only logs (reward PSI, calibration degradation, feature covariate shift, overlap
+health, optional rolling DR), **retrain only when triggers fire** (not daily), gate the candidate
+through the same `PromotionGate` as Phase 5/17, and audit promote/hold decisions. Includes simulated
+non-stationarity (`DriftSpec` in `data/drift.py`) and `simulate_drift_demo.py` / `drift_retrain_demo.ipynb`
+showing monitor fire → retrain → metric recovery. Flags `use_drift_monitoring`, `use_simulated_drift`
+(off by default).
+
 ## Verification matrix
 
 | Claim | Where | State |
@@ -209,6 +220,10 @@ not a value change).
 | RDL model promotes only via the same DR gate on route value | `tests/test_graph_model.py` (Phase 14) | ⏳ planned |
 | Every phase logs a lift/regression leaderboard row vs baseline | `tests/test_leaderboard.py` (Phase 17) | ✅ |
 | Leaderboard is append-only; lift requires primary-metric gain + DR gate | `tests/test_leaderboard.py` (Phase 17) | ✅ |
+| Drift monitor scores reference vs recent; retrain only on trigger | `tests/test_monitoring_signals.py`, `tests/test_retrain_loop.py` (Phase 18) | ⏳ planned |
+| Retrain candidate promotes only via DR gate; HOLD leaves deployed manifest | `tests/test_retrain_loop.py` (Phase 18) | ⏳ planned |
+| Simulated drift demo: frozen degrades, monitor fires, retrain recovers | `tests/test_drift_simulator.py`, `scripts/simulate_drift_demo.py` (Phase 18) | ⏳ planned |
+| `use_drift_monitoring=False` leaves serve path unchanged | per-phase tests (Phase 18) | ⏳ planned |
 
 † The PLAN originally framed this as "cumulative regret trends down." That downward *curve* is an
 **online-learning** phenomenon (the model improving across many rounds). A single deployed shift

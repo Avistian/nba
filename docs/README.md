@@ -47,6 +47,7 @@ adapt to a non-stationary world. It combines four disciplines:
 | 19 | [19-neural-combinatorial-optimization.md](19-neural-combinatorial-optimization.md) | **Phase 15 (deferred):** an attention encoder-decoder router with OR-Tools as the test oracle — build only at fleet scale. |
 | 20 | [20-decision-focused-rdl.md](20-decision-focused-rdl.md) | **Phase 16 (deferred):** the research frontier — train the GNN end-to-end through the orienteering optimizer. |
 | 21 | [21-experiment-leaderboard.md](21-experiment-leaderboard.md) | **Phase 17 build (✅ built):** the append-only experiment leaderboard that judges every phase a **lift, regression, or neutral** vs the baseline through the DR gate. |
+| 22 | [22-drift-monitoring-retrain-loop.md](22-drift-monitoring-retrain-loop.md) | **Phase 18 build (planned):** drift signals on append-only logs, **conditional** retrain (not daily), DR-gated promotion, and a simulated drift demo showing monitor fire → retrain → recovery. |
 
 ## Core idea in one diagram
 

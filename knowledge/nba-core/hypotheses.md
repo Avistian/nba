@@ -2,13 +2,14 @@
 
 Need more data before promoting to rules.
 
-## H1: Online retraining across shifts will show decreasing per-round regret
+## H1: Conditional retrain on drift will show decreasing per-round regret post-trigger
 
-A single shift uses a fixed gated policy → stationary regret. Hypothesis: periodic
-`RewardModel.fit(load_events())` + re-gating across many shifts produces the textbook downward
-regret curve.
+A single shift uses a fixed gated policy → stationary regret. Hypothesis: **drift-triggered**
+retrain (Phase 18: monitor → trigger → DR gate → promote) on accumulated logs produces recovery
+toward pre-drift regret after non-stationarity, without the noise of daily blind retrain.
 
-*Evidence so far: 0 online-retrain loops implemented. Test when adding continual learning.*
+*Evidence so far: Phase 18 planned (`plans/phase-18-drift-monitoring-retrain-loop.md`); 0 monitor/retrain
+code yet. Test via `simulate_drift_demo.py` when implemented.*
 
 ## H2: Parquet batch logs + SQLite serving store remain sufficient until multi-rep concurrency
 

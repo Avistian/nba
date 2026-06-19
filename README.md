@@ -101,7 +101,7 @@ Phases 9–16 extend the verified loop with the upgrades from
   `household_id` column, so the `BanditEvent` data contract is **unchanged** and every existing learner
   consumes relational logs as-is.
 - **Every upgrade is tested and proves itself on a logged leaderboard** (Phase 17, **built**). Built
-  right after the relational dataset and before the upgrades (order: **9 → 17 → 10–16**), Phase 17 adds
+  right after the relational dataset and before the upgrades (order: **9 → 17 → 18 → 10–16**), Phase 17 adds
   an append-only `artifacts/leaderboard.jsonl` (+ `leaderboard.md`): each flag config is scored against
   the baseline and judged a **lift, regression, or neutral**, where a lift requires both a higher
   realized shift value and clearing the DR gate, and a regression blocks adoption.

@@ -377,7 +377,9 @@ vs the `baseline` (all flags off), the **DR-gate result** (reusing `ope/gate.py`
 are facts, never overwritten — and the oracle is used for grading only, never for serving. A *lift*
 requires both a higher primary metric (realized shift value) and clearing the gate, so the board can't
 be gamed by noise; a **regression blocks the upgrade's adoption**. The build order is therefore
-**9 → 17 → 10-16**, and each upgrade phase names its leaderboard experiment(s) in its plan file.
+**9 → 17 → 18 → 10-16**, and each upgrade phase names its leaderboard experiment(s) in its plan file.
+Phase 18 (drift monitoring + conditional retrain) closes the operational ML loop between the
+leaderboard and the routing/value upgrades.
 
 The relational dataset feeds a GNN value model that still speaks the **`QModel` protocol**, so the
 bandit, OPE, router, API, and ethics layers are unchanged — RDL replaces exactly one box (the reward

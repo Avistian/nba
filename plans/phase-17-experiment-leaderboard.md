@@ -15,7 +15,8 @@ doc 11 §10 yardsticks ("every upgrade must prove itself"). Step-by-step build i
 ## Build sequence (where this slots in)
 
 ```
-Phase 9 (relational dataset)  ->  Phase 17 (this leaderboard)  ->  Phases 10-16 (each upgrade,
+Phase 9 (relational dataset)  ->  Phase 17 (this leaderboard)  ->  Phase 18 (drift monitor + conditional retrain)
+                                                                    ->  Phases 10-16 (each upgrade,
                                                                     tested + proven on the board)
 ```
 
