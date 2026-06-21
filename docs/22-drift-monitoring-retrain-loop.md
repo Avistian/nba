@@ -120,6 +120,9 @@ today.
 | `drift_*_threshold` | Per-signal triggers |
 | `retrain_time_decay_halflife_days` | Optional sample weights for fit |
 | `use_simulated_drift` | Enable `DriftSpec` in log generation (demo/grading only) |
+| `use_monitoring_dashboard` | Start optional Grafana + Prometheus via Docker Compose (dev/demo) |
+| `metrics_exporter_enabled` | Expose Prometheus `/metrics` from drift JSONL + event-store rollups |
+| `metrics_exporter_port` | HTTP port for the exporter (default `9091`) |
 
 Full table in [phase-18 plan § Feature flags](../plans/phase-18-drift-monitoring-retrain-loop.md).
 
@@ -140,13 +143,78 @@ uv run python scripts/run_experiment.py --experiment-id phase18-drift-retrain --
 Primary metric: `realized_shift_value_mean` and `decision_regret_mean` after drift onset. The
 retrain-enabled row should **lift**; monitor-only (no promote) should **regress** under drift.
 
-## 8. What every acceptance check proves
+## 8. Grafana ops dashboard (optional)
+
+Phase 18 adds a **read-only observability layer** on top of the append-only artifacts the monitor
+already writes. This is the on-call view of the same signals `run_monitor.py` computes — not a second
+source of truth.
+
+### Stack
+
+```text
+drift_reports.jsonl ──┐
+retrain_audit.jsonl ──┼──> metrics exporter (:9091/metrics) ──> Prometheus ──> Grafana "NBA Ops"
+EventStore + deployed.json ─┘
+```
+
+| Component | Role |
+|-----------|------|
+| **`run_metrics_exporter.py`** | Long-lived HTTP server; re-reads JSONL/SQLite; emits Prometheus text |
+| **Prometheus** | Scrapes `:9091` every 15s; stores time series |
+| **Grafana** | Provisioned dashboard `monitoring/grafana/dashboards/nba-ops.json` |
+| **`monitoring_stack.sh`** | `docker compose -f monitoring/docker-compose.monitoring.yml up` |
+
+All off by default (`NBA_USE_MONITORING_DASHBOARD=0`, `NBA_METRICS_EXPORTER_ENABLED=0`). Tests and CI
+never require Docker — the exporter is validated via `run_metrics_exporter.py --once` printing metrics
+text.
+
+### Dashboard rows
+
+1. **Deployed model** — age (days since promote), DR lower bound, overlap_ok.
+2. **Drift signals** — reward PSI, calibration Δ, feature PSI, rolling DR drop; threshold lines from
+   exported `nba_drift_*_threshold` gauges.
+3. **Reward & calibration** — recent mean reward, calibration MAE recent vs reference.
+4. **Overlap health** — min propensity and ESS/n vs configured floors.
+5. **Retrain audit** — timeline of PROMOTE / HOLD decisions with trigger reasons.
+
+### Local quickstart
+
+```bash
+# 1. Run a drift demo so artifacts exist
+uv run python scripts/simulate_drift_demo.py --n-pre 5000 --n-post 3000 --shifts 4 --seed 7
+
+# 2. Exporter (host)
+NBA_METRICS_EXPORTER_ENABLED=1 uv run python scripts/run_metrics_exporter.py --port 9091
+
+# 3. Grafana + Prometheus (Docker)
+./scripts/monitoring_stack.sh up
+# Open http://localhost:3000 → "NBA Ops" dashboard (provisioned)
+```
+
+During the demo, watch calibration MAE and reward PSI cross their threshold lines as the frozen model
+serves into the post-drift world, then see the retrain annotation when `run_retrain_loop.py` promotes.
+
+### Alerting
+
+Ship one Grafana alert rule group (**paused by default**): any primary drift signal above threshold
+for two consecutive scrapes. Overlap failures are **warnings** (block promote, don't trigger retrain).
+Wire Slack/email via Grafana contact points locally; no webhooks committed to the repo.
+
+### Without Docker
+
+- Notebook (`drift_retrain_demo.ipynb`) and `artifacts/drift_demo_report.json` remain the zero-dep path.
+- `run_metrics_exporter.py --once` dumps metrics for scripting/CI.
+- Import `nba-ops.json` manually into any Grafana instance later.
+
+## 9. What every acceptance check proves
 
 - `use_drift_monitoring=False` → no code path changes in serve/demo.
 - `run_monitor.py` appends a complete `DriftReport` with all signals.
 - Retrain runs **only** when `RetrainTrigger.should_retrain` (unit-tested).
 - Promotion clears `PromotionGate`; HOLD leaves `deployed.json` unchanged.
 - `simulate_drift_demo.py` shows fire → retrain → recovery on seeded drift.
+- Prometheus exporter emits valid metrics text from synthetic artifacts (no Docker).
+- Grafana dashboard JSON imports and plots all five drift signals with thresholds.
 
 > Back to: [09-build-nba-from-scratch.md §23](09-build-nba-from-scratch.md) (online/continual learning
 > bullet — this phase operationalizes it with drift signals, not blind periodic retrain).

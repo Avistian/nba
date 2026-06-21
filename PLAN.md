@@ -190,7 +190,10 @@ score drift on append-only logs (reward PSI, calibration degradation, feature co
 health, optional rolling DR), **retrain only when triggers fire** (not daily), gate the candidate
 through the same `PromotionGate` as Phase 5/17, and audit promote/hold decisions. Includes simulated
 non-stationarity (`DriftSpec` in `data/drift.py`) and `simulate_drift_demo.py` / `drift_retrain_demo.ipynb`
-showing monitor fire → retrain → metric recovery. Flags `use_drift_monitoring`, `use_simulated_drift`
+showing monitor fire → retrain → metric recovery. Adds an **optional Grafana + Prometheus ops
+dashboard** (provisioned `nba-ops.json`, Prometheus exporter on `:9091`, Docker Compose for local dev)
+that visualizes drift signals, overlap health, and retrain audit — off by default, no Docker in CI.
+Flags `use_drift_monitoring`, `use_simulated_drift`, `use_monitoring_dashboard`, `metrics_exporter_enabled`
 (off by default).
 
 ## Verification matrix
@@ -224,6 +227,8 @@ showing monitor fire → retrain → metric recovery. Flags `use_drift_monitorin
 | Retrain candidate promotes only via DR gate; HOLD leaves deployed manifest | `tests/test_retrain_loop.py` (Phase 18) | ⏳ planned |
 | Simulated drift demo: frozen degrades, monitor fires, retrain recovers | `tests/test_drift_simulator.py`, `scripts/simulate_drift_demo.py` (Phase 18) | ⏳ planned |
 | `use_drift_monitoring=False` leaves serve path unchanged | per-phase tests (Phase 18) | ⏳ planned |
+| Prometheus exporter emits drift gauges from JSONL artifacts (no Docker) | `tests/test_monitoring_exporter.py` (Phase 18) | ⏳ planned |
+| Grafana `nba-ops` dashboard plots all drift signals + retrain audit | `monitoring/grafana/dashboards/nba-ops.json` (Phase 18) | ⏳ planned |
 
 † The PLAN originally framed this as "cumulative regret trends down." That downward *curve* is an
 **online-learning** phenomenon (the model improving across many rounds). A single deployed shift
