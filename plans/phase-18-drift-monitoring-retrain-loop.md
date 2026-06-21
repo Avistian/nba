@@ -87,9 +87,14 @@ Overlap failures **warn** and block promotion until resolved; they do not alone 
 | `retrain_time_decay_halflife_days` | `float \| None = None` | Optional sample weights for fit; `None` = uniform. |
 | `monitoring_report_path` | `Path = artifacts/monitoring/drift_reports.jsonl` | Append-only monitor output. |
 | `retrain_audit_path` | `Path = artifacts/monitoring/retrain_audit.jsonl` | Append-only retrain decisions. |
-| `deployed_model_manifest` | `Path = artifacts/models/deployed.json` | Points at active model dir + promotion timestamp + reference metrics. |
+| `deployed_model_manifest` | `Path = artifacts/models/deployed.json` | Points at active model dir + promotion metrics + PSI bin edges. |
+| `use_monitoring_dashboard` | `bool = False` | When on, documents/starts the optional Grafana stack; off => no Docker deps. |
+| `metrics_exporter_enabled` | `bool = False` | Expose Prometheus `/metrics` from drift reports + event-store rollups. |
+| `metrics_exporter_port` | `int = 9091` | HTTP port for the Prometheus text exporter. |
+| `metrics_refresh_seconds` | `int = 30` | How often the exporter re-reads JSONL/SQLite between scrapes. |
 
-With `use_drift_monitoring=False` (default), behavior is identical to today.
+With `use_drift_monitoring=False` (default), behavior is identical to today. With
+`use_monitoring_dashboard=False` (default), no Docker services are required for tests or CI.
 
 ## Files to create
 
@@ -99,14 +104,26 @@ src/nba/monitoring/
   signals.py           # DriftSignal, DriftReport, compute_* per signal
   triggers.py          # evaluate_triggers(report, settings) -> RetrainTrigger
   retrain.py           # RetrainLoop: candidate fit, gate, promote/skip, manifest update
+  exporter.py          # Prometheus text exposition from DriftReport + audit + event rollups
+  store_reader.py      # read drift_reports.jsonl / retrain_audit.jsonl / EventStore aggregates
 src/nba/data/drift.py  # DriftSpec + inject drift into simulator latent (flat + relational)
-scripts/run_monitor.py           # score drift on EventStore or parquet; append report
-scripts/run_retrain_loop.py      # monitor -> trigger -> retrain -> gate -> audit
-scripts/simulate_drift_demo.py   # multi-shift: frozen model degrades, retrain recovers
+monitoring/
+  docker-compose.monitoring.yml     # Grafana + Prometheus (optional, dev/demo only)
+  prometheus/prometheus.yml         # scrape the NBA metrics exporter
+  grafana/provisioning/
+    datasources/prometheus.yml
+    dashboards/dashboards.yml
+  grafana/dashboards/nba-ops.json   # provisioned "NBA Ops" dashboard (version-controlled)
+scripts/run_monitor.py              # score drift on EventStore or parquet; append report
+scripts/run_retrain_loop.py         # monitor -> trigger -> retrain -> gate -> audit
+scripts/run_metrics_exporter.py     # long-lived HTTP :9091/metrics (Prometheus pull)
+scripts/simulate_drift_demo.py      # multi-shift: frozen model degrades, retrain recovers
+scripts/monitoring_stack.sh         # up/down helpers wrapping docker compose
 notebooks/drift_retrain_demo.ipynb
 tests/test_monitoring_signals.py
 tests/test_retrain_loop.py
 tests/test_drift_simulator.py
+tests/test_monitoring_exporter.py
 ```
 
 ## `src/nba/monitoring/signals.py`
@@ -254,6 +271,149 @@ uv run python scripts/run_retrain_loop.py --db data/events.db
 
 Both respect `NBA_USE_DRIFT_MONITORING=1`.
 
+## Observability dashboard (Grafana + Prometheus)
+
+The drift loop already writes **append-only facts** (`drift_reports.jsonl`, `retrain_audit.jsonl`,
+`deployed.json`, SQLite events). Phase 18 adds a **read-only observability layer** on top — the same
+pattern production would use (metrics for trends, dashboards for on-call, alerts for triggers) —
+without coupling Grafana into the serve hot path.
+
+### Architecture
+
+```text
+EventStore (SQLite) ─────┐
+drift_reports.jsonl ─────┼──> store_reader.py ──> exporter.py (:9091/metrics)
+retrain_audit.jsonl ─────┤                              │
+deployed.json ───────────┘                              v
+                                                 Prometheus (scrape 15s)
+                                                        │
+                                                        v
+                                                 Grafana "NBA Ops" dashboard
+```
+
+- **Source of truth stays JSONL/SQLite.** Grafana never mutates artifacts; it only visualizes what
+  `run_monitor.py` / `run_retrain_loop.py` already wrote.
+- **Prometheus pull, not push.** The exporter is a small long-lived process (or a sidecar started by
+  `monitoring_stack.sh`) that re-reads the append-only files on each scrape. No new database.
+- **Optional and off by default.** `use_monitoring_dashboard=False` means tests and CI never need
+  Docker. The exporter can still be unit-tested by curling `/metrics` text.
+
+### `src/nba/monitoring/exporter.py`
+
+Expose **gauges** (latest value) and **counters** (monotonic totals) in Prometheus text format:
+
+| Metric | Type | Source | Dashboard use |
+|--------|------|--------|---------------|
+| `nba_drift_reward_psi` | gauge | latest `DriftReport` | PSI vs threshold line |
+| `nba_drift_calibration_mae_recent` | gauge | latest report | calibration degradation |
+| `nba_drift_calibration_mae_delta` | gauge | latest report | Δ vs reference |
+| `nba_drift_feature_psi_max` | gauge | latest report | covariate shift |
+| `nba_drift_rolling_dr` | gauge | latest report | policy value on recent window |
+| `nba_drift_rolling_dr_drop` | gauge | latest report | drop vs deployed DR |
+| `nba_drift_overlap_min_propensity` | gauge | latest report | OPE overlap health |
+| `nba_drift_overlap_ess_fraction` | gauge | latest report | ESS/n floor |
+| `nba_drift_signal_triggered{signal="..."}` | gauge 0/1 | per signal | annotation + stat panel |
+| `nba_deployed_model_age_days` | gauge | `deployed.json` | staleness |
+| `nba_deployed_dr_lb` | gauge | `deployed.json` | shipped policy value |
+| `nba_events_labeled_total` | counter | EventStore | log volume |
+| `nba_events_recent_mean_reward` | gauge | EventStore recent window | outcome mix drift |
+| `nba_retrain_total{verdict="promote\|hold"}` | counter | `retrain_audit.jsonl` | retrain timeline |
+
+Each gauge that has a configured threshold also exports `nba_drift_<signal>_threshold` so Grafana
+alert rules can compare value/threshold without hard-coding numbers in the dashboard JSON.
+
+```python
+def render_prometheus_text(*, snapshot: MonitoringSnapshot, settings: Settings) -> str: ...
+
+def build_snapshot(
+    *,
+    settings: Settings,
+    store: EventStore | None = None,
+) -> MonitoringSnapshot:
+    """Read JSONL tails + deployed manifest + optional EventStore rollups."""
+```
+
+`MonitoringSnapshot` is a plain dataclass — unit-testable without HTTP or Docker.
+
+### `scripts/run_metrics_exporter.py`
+
+```bash
+# Start the exporter (blocks; re-reads artifacts every metrics_refresh_seconds)
+uv run python scripts/run_metrics_exporter.py --port 9091
+
+# One-shot dump for CI / debugging (no HTTP server)
+uv run python scripts/run_metrics_exporter.py --once > /tmp/nba-metrics.prom
+```
+
+Honors `NBA_METRICS_EXPORTER_ENABLED=1`. When disabled, the script exits 0 with a message (no-op).
+
+### `monitoring/docker-compose.monitoring.yml`
+
+Optional dev stack (Grafana OSS + Prometheus). **Not** started by `make test` or the serve API.
+
+```bash
+# Terminal 1: exporter (reads local artifacts)
+NBA_METRICS_EXPORTER_ENABLED=1 uv run python scripts/run_metrics_exporter.py
+
+# Terminal 2: Grafana + Prometheus
+./scripts/monitoring_stack.sh up
+# Grafana -> http://localhost:3000  (admin/admin, change on first login)
+# Prometheus -> http://localhost:9090
+```
+
+`scripts/monitoring_stack.sh` wraps `docker compose -f monitoring/docker-compose.monitoring.yml`
+with `host.docker.internal` (or `extra_hosts`) so Prometheus inside Docker can scrape the host-bound
+exporter on `:9091`.
+
+Add Makefile targets:
+
+```makefile
+monitoring-up:
+	./scripts/monitoring_stack.sh up
+
+monitoring-down:
+	./scripts/monitoring_stack.sh down
+```
+
+### Provisioned Grafana dashboard — `monitoring/grafana/dashboards/nba-ops.json`
+
+Version-controlled dashboard **"NBA Ops"** with rows:
+
+1. **Deployed model** — age (days), DR lower bound, last promote timestamp, overlap_ok badge.
+2. **Drift signals** — time series of all five signals with threshold constant lines; red annotations
+   when `nba_drift_signal_triggered==1`.
+3. **Calibration & reward** — recent mean reward, calibration MAE recent vs reference, reward
+   histogram (Infinity/JSON datasource reading the latest report's binned counts if exported).
+4. **Overlap & OPE validity** — min propensity, ESS fraction vs floors (warn band).
+5. **Retrain audit** — table/timeline of PROMOTE/HOLD rows from `retrain_audit.jsonl` (Grafana
+   PostgreSQL/SQLite is overkill; export last N audit rows as a JSON array gauge or use Grafana's
+   **Logs/JSON** panel fed by `exporter.py`).
+
+During `simulate_drift_demo.py`, optionally start the exporter and print the Grafana URL so a human
+can watch signals cross thresholds live while the demo runs.
+
+### Alerting (prototype-grade)
+
+Provision one Grafana alert rule group **"NBA drift triggers"** (paused by default in repo JSON):
+
+- `nba_drift_reward_psi > nba_drift_reward_psi_threshold` for 2 consecutive evaluations.
+- `nba_drift_calibration_mae_delta > threshold`.
+- `nba_drift_overlap_min_propensity < floor` → **warning** (blocks promote, does not page for retrain).
+
+Contact points stay empty in the repo (no Slack webhook committed). Document how to wire Slack/email
+in `docs/22` §9. In production this becomes PagerDuty/Opsgenie; locally Grafana's UI notification is
+enough.
+
+### Fallback without Docker
+
+For agents/CI that cannot run Docker:
+
+- `run_metrics_exporter.py --once` prints Prometheus text (asserted in tests).
+- `simulate_drift_demo.py` still writes `artifacts/drift_demo_report.json` and the notebook plots
+  remain the zero-dependency visualization path.
+- Grafana dashboard JSON is importable manually (`+ Import → upload nba-ops.json`) if Docker is
+  available later.
+
 ## Tests
 
 `tests/test_monitoring_signals.py`
@@ -271,6 +431,13 @@ Both respect `NBA_USE_DRIFT_MONITORING=1`.
 `tests/test_drift_simulator.py`
 - Pre/post drift logs have different mean reward (labeled).
 - With `DriftSpec` disabled, matches standard `generate_logs` within tolerance.
+
+`tests/test_monitoring_exporter.py`
+- `build_snapshot` on synthetic `DriftReport` + audit rows produces expected gauge values.
+- `render_prometheus_text` includes `# HELP` / `# TYPE` and metric names from the table above.
+- Threshold companion metrics are emitted next to each signal gauge.
+- `metrics_exporter_enabled=False` → `run_metrics_exporter.py --once` is a no-op exit 0.
+- No oracle symbols imported by `monitoring/exporter.py`.
 
 ## Leaderboard entry (lift/regression)
 
@@ -293,4 +460,7 @@ loop engages; the monitor-only row (no retrain allowed) should **regress** vs ba
 - [ ] Promoted candidate clears the same `PromotionGate` as Phase 5/17; HOLD leaves `deployed.json` unchanged.
 - [ ] `simulate_drift_demo.py` shows monitor firing post-drift and metric recovery after promote.
 - [ ] Oracle symbols in `data/drift.py` stay out of learning modules (extend ethics guard if needed).
+- [ ] `run_metrics_exporter.py --once` emits valid Prometheus text from synthetic drift artifacts (no Docker).
+- [ ] `monitoring/grafana/dashboards/nba-ops.json` imports cleanly; panels plot all five drift signals with thresholds.
+- [ ] `use_monitoring_dashboard=False` → `make test` and serve API require no Docker daemon.
 - [ ] `ruff` / `pyright` clean; `pytest` green.
