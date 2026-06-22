@@ -1,0 +1,688 @@
+"""The conditional retrain loop — fit candidate, gate through ``PromotionGate``, promote or hold.
+
+Pipeline (Phase 18 plan):
+
+1. Split events reference/recent by ``settings.monitor_*_window``.
+2. :func:`~nba.monitoring.signals.build_drift_report` scores the five signals.
+3. :func:`~nba.monitoring.triggers.evaluate_triggers` decides whether to retrain.
+4. If not triggered → append drift report + audit HOLD; return.
+5. Fit candidate :class:`~nba.reward.model.RewardModel` on reference plus the
+   train portion of recent events (with optional time-decay sample weights).
+6. :class:`~nba.ope.gate.PromotionGate` evaluates the candidate vs the deployed
+   baseline on the held-out tail of the recent window.
+7. If promote → write candidate dir under ``artifacts/models/candidates/<ts>/``;
+   atomic-rename ``deployed.json``.
+8. Append the audit row (promote|hold) + the drift report.
+
+Invariants:
+
+- **No in-place overwrite** of ``model.joblib``. Promotion writes a candidate
+  dir then updates ``deployed.json`` atomically (``os.replace``).
+- **Same gate** as Phase 5/17: the candidate's DR lower bound must clear
+  ``baseline_value + ope_min_lift``.
+- **Append-only audit** at ``artifacts/monitoring/retrain_audit.jsonl`` — trigger
+  reasons, metrics, verdict.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+
+import numpy as np
+
+from nba.api.store import EventStore
+from nba.bandits.base import Policy
+from nba.bandits.epsilon_greedy import EpsilonGreedy
+from nba.bandits.thompson import BootstrapEnsemble, ThompsonSampling
+from nba.bandits.ucb import UCB
+from nba.config import Settings
+from nba.monitoring.cadence import count_labeled, count_labeled_since
+from nba.monitoring.signals import (
+    DriftReport,
+    DriftReportContext,
+    append_report,
+    build_drift_report,
+)
+from nba.monitoring.store_reader import AuditRow, DeployedManifest, as_utc
+from nba.monitoring.triggers import RetrainTrigger, evaluate_triggers
+from nba.ope.estimators import LoggedBatch, dr, eval_action_matrix, q_matrix
+from nba.ope.gate import PromotionGate
+from nba.reward.model import RewardModel
+from nba.schema import BanditEvent
+
+
+@dataclass(frozen=True)
+class RetrainOutcome:
+    """The retrain loop's verdict + the evidence behind it."""
+
+    promoted: bool
+    trigger: RetrainTrigger
+    candidate_metrics: dict[str, float]  # mse, calibration_mae, dr, dr_lb
+    gate_reason: str
+    candidate_model_dir: str | None = None
+    report: DriftReport | None = None
+    audit: AuditRow | None = field(default=None, repr=False)
+
+
+def _labeled(events: list[BanditEvent]) -> list[BanditEvent]:
+    return [e for e in events if e.reward is not None]
+
+
+def _split_windows(
+    events: list[BanditEvent],
+    *,
+    settings: Settings,
+    promoted_at: datetime | None = None,
+) -> tuple[list[BanditEvent], list[BanditEvent]]:
+    """Reference = post-promotion labeled events before the recent tail (capped);
+    Recent = the last ``monitor_recent_window`` labeled events.
+
+    When ``promoted_at`` is set, only events strictly after that timestamp are
+    eligible for the reference slice (Phase 18: reference since last promotion).
+
+    If every post-promotion event falls inside the recent tail (common right after
+    promotion), the post-promotion pool is split into older reference and newer
+    recent slices instead of raising.
+    """
+    labeled = _labeled(events)
+    if len(labeled) < 2:
+        raise ValueError("need at least 2 labeled events to score drift")
+    # Reserve at least one labeled row for reference; do not cap at len // 2.
+    recent_n = min(settings.monitor_recent_window, max(1, len(labeled) - 1))
+    if recent_n < 1:
+        raise ValueError(
+            f"not enough labeled events for windows (labeled={len(labeled)}, "
+            f"requested recent={recent_n})"
+        )
+    recent = labeled[-recent_n:]
+    recent_start = len(labeled) - recent_n
+    pre_recent = labeled[:recent_start]
+    if promoted_at is not None:
+        cutoff = as_utc(promoted_at)
+        latest_labeled = max(as_utc(e.timestamp) for e in labeled)
+        # Fresh bootstrap: wall-clock promoted_at is after every historical event.
+        if cutoff > latest_labeled:
+            ref_pool = pre_recent
+        else:
+            ref_pool = [e for e in pre_recent if as_utc(e.timestamp) > cutoff]
+    else:
+        ref_pool = pre_recent
+    if not ref_pool:
+        if promoted_at is None:
+            raise ValueError(
+                f"not enough labeled events for reference window "
+                f"(labeled={len(labeled)}, pre_recent={len(pre_recent)})"
+            )
+        post_promo = [e for e in labeled if as_utc(e.timestamp) > cutoff]
+        if len(post_promo) < 2:
+            raise ValueError(
+                f"not enough post-promotion labeled events for reference window "
+                f"(labeled={len(labeled)}, post_promotion={len(post_promo)}, "
+                f"promoted_at={promoted_at})"
+            )
+        recent_n_eff = min(recent_n, max(1, len(post_promo) // 2))
+        ref_n_eff = min(settings.monitor_reference_window, len(post_promo) - recent_n_eff)
+        if ref_n_eff < 1:
+            raise ValueError(
+                f"not enough post-promotion labeled events for reference window "
+                f"(labeled={len(labeled)}, post_promotion={len(post_promo)}, "
+                f"promoted_at={promoted_at})"
+            )
+        reference = post_promo[-(ref_n_eff + recent_n_eff) : -recent_n_eff]
+        recent = post_promo[-recent_n_eff:]
+        return reference, recent
+    ref_n = min(settings.monitor_reference_window, max(1, len(ref_pool)))
+    reference = ref_pool[-ref_n:]
+    return reference, recent
+
+
+def _split_recent_for_training_and_gate(
+    recent_events: list[BanditEvent],
+) -> tuple[list[BanditEvent], list[BanditEvent]]:
+    """Use older recent rows for adaptation and the newest rows as the gate holdout."""
+    if not recent_events:
+        raise ValueError("cannot split empty recent events")
+    gate_n = max(1, len(recent_events) // 2)
+    return recent_events[:-gate_n], recent_events[-gate_n:]
+
+
+def _time_decay_weights(
+    events: list[BanditEvent], *, settings: Settings, now: datetime | None = None
+) -> np.ndarray | None:
+    """Exponential decay sample weights by event age; ``None`` when halflife is unset.
+
+    Weight = 0.5 ** (age_days / halflife_days). Newest events get weight 1.0.
+    """
+    halflife = settings.retrain_time_decay_halflife_days
+    if halflife is None:
+        return None
+    now_utc = as_utc(now or datetime.now(UTC))
+    ages = np.array(
+        [(now_utc - as_utc(e.timestamp)).total_seconds() / 86400.0 for e in events],
+        dtype=np.float64,
+    )
+    ages = np.clip(ages, 0.0, None)
+    return np.power(0.5, ages / halflife)
+
+
+def _fit_candidate(
+    train_events: list[BanditEvent],
+    *,
+    settings: Settings,
+    weights: np.ndarray | None,
+) -> RewardModel:
+    """Fit a candidate reward model (uniform or time-decay weighted)."""
+    if weights is None:
+        return RewardModel.fit(train_events, settings=settings)
+    # LightGBM ``sample_weight`` path: re-fit manually.
+    return _fit_weighted(train_events, settings=settings, weights=weights)
+
+
+def _fit_weighted(
+    events: list[BanditEvent], *, settings: Settings, weights: np.ndarray
+) -> RewardModel:
+    """Fit a LightGBM regressor with per-sample weights, plus isotonic calibration."""
+    from lightgbm import LGBMRegressor, early_stopping  # noqa: PLC0415
+    from sklearn.isotonic import IsotonicRegression  # noqa: PLC0415
+
+    from nba.data.features import FEATURE_NAMES, featurize  # noqa: PLC0415
+
+    labeled = [e for e in events if e.reward is not None]
+    x = np.vstack([featurize(e.context, e.action) for e in labeled])
+    y = np.array([e.reward for e in labeled], dtype=np.float64)
+    rng = np.random.default_rng(settings.seed)
+    perm = rng.permutation(len(labeled))
+    n_val = max(1, int(len(labeled) * 0.2))
+    val_idx, train_idx = perm[:n_val], perm[n_val:]
+
+    booster = LGBMRegressor(
+        n_estimators=600,
+        learning_rate=0.05,
+        num_leaves=63,
+        min_child_samples=40,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=settings.seed,
+        objective="regression",
+        verbose=-1,
+    )
+    booster.fit(
+        x[train_idx],
+        y[train_idx],
+        sample_weight=weights[train_idx],
+        eval_set=[(x[val_idx], y[val_idx])],
+        eval_metric="l2",
+        callbacks=[early_stopping(40, verbose=False)],
+    )
+    raw_val = booster.predict(x[val_idx])
+    calibrator = IsotonicRegression(out_of_bounds="clip")
+    calibrator.fit(np.asarray(raw_val, dtype=np.float64), y[val_idx])
+    return RewardModel(booster=booster, calibrator=calibrator, feature_names=list(FEATURE_NAMES))
+
+
+def _policy_family(policy: Policy) -> str:
+    """Return the base bandit family name, stripping an ``EthicalPolicy`` wrapper."""
+    inner = getattr(policy, "_inner", policy)
+    return str(inner.name)
+
+
+def _is_ethical_policy(policy: Policy) -> bool:
+    from nba.ethics import EthicalPolicy  # noqa: PLC0415
+
+    return isinstance(policy, EthicalPolicy)
+
+
+def _build_policy(
+    model: RewardModel,
+    *,
+    policy_family: str,
+    settings: Settings,
+    rng: np.random.Generator,
+    model_dir: Path | None = None,
+    events: list[BanditEvent] | None = None,
+) -> Policy:
+    """Reconstruct a deployed bandit policy from manifest metadata."""
+    if policy_family == "epsilon_greedy":
+        return EpsilonGreedy(model, epsilon=settings.epsilon, rng=rng)
+    if policy_family == "ucb":
+        return UCB(model, c=settings.ucb_c, temp=settings.softmax_temp, rng=rng)
+    if policy_family == "thompson":
+        if model_dir is not None and (model_dir / "ensemble.json").exists():
+            ensemble = BootstrapEnsemble.load(model_dir)
+            return ThompsonSampling(ensemble, rng=rng)
+        if events:
+            ensemble = BootstrapEnsemble.fit(
+                events, settings=settings, n_models=settings.n_bootstrap
+            )
+            return ThompsonSampling(ensemble, rng=rng)
+        raise ValueError(
+            f"cannot rebuild thompson policy from {model_dir}: "
+            "missing ensemble.json and no events to refit"
+        )
+    raise ValueError(f"unknown policy_family {policy_family!r}")
+
+
+def _assemble_deployed_policy(
+    model: RewardModel,
+    *,
+    policy_family: str,
+    ethical_wrapper: bool,
+    settings: Settings,
+    rng: np.random.Generator,
+    model_dir: Path,
+    events: list[BanditEvent] | None = None,
+) -> Policy:
+    """Build the inner bandit policy and optionally wrap it for sensitive-context caps."""
+    inner = _build_policy(
+        model,
+        policy_family=policy_family,
+        settings=settings,
+        rng=rng,
+        model_dir=model_dir,
+        events=events,
+    )
+    if ethical_wrapper:
+        from nba.ethics import EthicalPolicy  # noqa: PLC0415
+
+        return EthicalPolicy(inner, settings, rng=rng)
+    return inner
+
+
+def load_deployed_stack(
+    *,
+    settings: Settings,
+    events: list[BanditEvent] | None = None,
+    manifest: DeployedManifest | None = None,
+) -> tuple[RewardModel, Policy, DeployedManifest, float]:
+    """Load model + policy from ``deployed.json``, honoring stored policy metadata."""
+    from nba.monitoring.store_reader import read_deployed_manifest  # noqa: PLC0415
+
+    manifest = manifest or read_deployed_manifest(settings.deployed_model_manifest)
+    if manifest is None:
+        raise FileNotFoundError(f"no deployed manifest at {settings.deployed_model_manifest}")
+    model_dir = Path(manifest.model_dir)
+    if not model_dir.exists():
+        raise FileNotFoundError(f"deployed model_dir missing: {model_dir}")
+
+    model = RewardModel.load(model_dir)
+    rng = np.random.default_rng(settings.seed)
+    policy = _assemble_deployed_policy(
+        model,
+        policy_family=manifest.policy_family,
+        ethical_wrapper=manifest.ethical_wrapper,
+        settings=settings,
+        rng=rng,
+        model_dir=model_dir,
+        events=events,
+    )
+    return model, policy, manifest, manifest.dr_value
+
+
+def _write_deployed_manifest(
+    *,
+    settings: Settings,
+    model_dir: Path,
+    dr_value: float,
+    dr_lb: float,
+    baseline_value: float,
+    promoted_at: datetime | None = None,
+    policy_family: str = "epsilon_greedy",
+    ethical_wrapper: bool = False,
+) -> None:
+    """Atomically write ``deployed.json`` (tmp file + ``os.replace``)."""
+    settings.deployed_model_manifest.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "model_dir": str(model_dir),
+        "promoted_at": (promoted_at or datetime.now(UTC)).isoformat(),
+        "dr_value": float(dr_value),
+        "dr_lower_bound": float(dr_lb),
+        "baseline_value": float(baseline_value),
+        "feature_names": [],
+        "policy_family": policy_family,
+        "ethical_wrapper": ethical_wrapper,
+    }
+    tmp = settings.deployed_model_manifest.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, settings.deployed_model_manifest)
+
+
+def _bootstrap_deployed(
+    settings: Settings,
+    *,
+    events: list[BanditEvent],
+    now: datetime | None = None,
+) -> tuple[RewardModel, Policy, DeployedManifest | None, float]:
+    """When no ``deployed.json`` exists, fit a baseline model and write the manifest.
+
+    Returns (model, policy, manifest, deployed_dr). ``deployed_dr`` is the off-policy
+    DR estimate of the bootstrapped policy on a held-out slice — the same metric
+    :func:`~nba.monitoring.signals.rolling_dr_drop` compares against on the recent window.
+
+    The reward model is fit on reference plus an older portion of the recent window;
+    DR is estimated on the newest held-out recent rows so ``q_hat`` is not inflated
+    by training overlap (same split as the retrain promotion gate).
+    """
+    labeled = _labeled(events)
+    if not labeled:
+        raise ValueError("cannot bootstrap deployed model from empty logs")
+    reference_events, recent_events = _split_windows(events, settings=settings)
+    train_recent_events, gate_events = _split_recent_for_training_and_gate(recent_events)
+    train_events = list(reference_events) + list(train_recent_events)
+    model = RewardModel.fit(train_events, settings=settings)
+    policy = EpsilonGreedy(
+        model, epsilon=settings.epsilon, rng=np.random.default_rng(settings.seed)
+    )
+    gate_batch = LoggedBatch.from_events(gate_events)
+    q_hat = q_matrix(model, gate_batch.contexts)
+    pi_e = eval_action_matrix(policy, gate_batch.contexts)
+    dr_result = dr(gate_batch, q_hat, pi_e)
+    deployed_dr = float(dr_result.value)
+    deployed_dr_lb = float(dr_result.value - settings.ope_z * dr_result.std_err)
+    promoted_at = as_utc(now or datetime.now(UTC))
+    _write_deployed_manifest(
+        settings=settings,
+        model_dir=settings.model_dir,
+        dr_value=deployed_dr,
+        dr_lb=deployed_dr_lb,
+        baseline_value=deployed_dr,
+        promoted_at=promoted_at,
+        policy_family=_policy_family(policy),
+        ethical_wrapper=_is_ethical_policy(policy),
+    )
+    manifest = DeployedManifest(
+        model_dir=str(settings.model_dir),
+        promoted_at=promoted_at,
+        dr_value=deployed_dr,
+        dr_lower_bound=deployed_dr_lb,
+        baseline_value=deployed_dr,
+        feature_names=[],
+        policy_family=_policy_family(policy),
+        ethical_wrapper=_is_ethical_policy(policy),
+    )
+    return model, policy, manifest, deployed_dr
+
+
+def _append_audit(*, settings: Settings, row: AuditRow) -> None:
+    settings.retrain_audit_path.parent.mkdir(parents=True, exist_ok=True)
+    with settings.retrain_audit_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row.to_json()) + "\n")
+
+
+def _gate_baseline_value(
+    *,
+    deployed_model: RewardModel,
+    deployed_policy: Policy,
+    gate_batch: LoggedBatch,
+) -> float:
+    """Return the promotion-gate baseline in OPE DR units (same estimator as the candidate).
+
+    Always re-estimates the deployed policy on ``gate_batch`` so the baseline and candidate
+    are compared on the same held-out rows. Manifest ``deployed_dr`` is for drift monitoring
+    only and must not short-circuit this path.
+    """
+    q_hat_deployed = q_matrix(deployed_model, gate_batch.contexts)
+    pi_e_deployed = eval_action_matrix(deployed_policy, gate_batch.contexts)
+    return float(dr(gate_batch, q_hat_deployed, pi_e_deployed).value)
+
+
+def _thompson_ensemble(policy: Policy) -> BootstrapEnsemble | None:
+    """Return the bootstrap ensemble backing a Thompson policy, if any."""
+    inner = getattr(policy, "_inner", policy)
+    if isinstance(inner, ThompsonSampling):
+        return inner._ensemble
+    return None
+
+
+def _candidate_policy(
+    candidate: RewardModel,
+    *,
+    deployed_policy: Policy,
+    settings: Settings,
+    train_events: list[BanditEvent],
+) -> Policy:
+    """Build the candidate policy matching the deployed policy's family."""
+    rng = np.random.default_rng(settings.seed)
+    inner = _build_policy(
+        candidate,
+        policy_family=_policy_family(deployed_policy),
+        settings=settings,
+        rng=rng,
+        model_dir=None,
+        events=train_events,
+    )
+    if _is_ethical_policy(deployed_policy):
+        from nba.ethics import EthicalPolicy  # noqa: PLC0415
+
+        return EthicalPolicy(inner, settings, rng=rng)
+    return inner
+
+
+class RetrainLoop:
+    """Conditional retrain: monitor → trigger → fit candidate → DR gate → promote/hold."""
+
+    def __init__(self, *, settings: Settings, gate: PromotionGate) -> None:
+        self._settings = settings
+        self._gate = gate
+
+    def run(
+        self,
+        *,
+        deployed_model: RewardModel,
+        deployed_policy: Policy,
+        events: list[BanditEvent],
+        deployed_dr: float | None = None,
+        now: datetime | None = None,
+    ) -> RetrainOutcome:
+        """Run one monitor + (conditional) retrain cycle."""
+        settings = self._settings
+        now = now or datetime.now(UTC)
+
+        manifest = _read_manifest_safe(settings)
+        promoted_at = manifest.promoted_at if manifest else None
+        reference_events, recent_events = _split_windows(
+            events, settings=settings, promoted_at=promoted_at
+        )
+        ref_batch = LoggedBatch.from_events(reference_events)
+        recent_batch = LoggedBatch.from_events(recent_events)
+
+        report = build_drift_report(
+            ctx=DriftReportContext(
+                model=deployed_model,
+                policy=deployed_policy,
+                reference=ref_batch,
+                recent=recent_batch,
+                deployed_dr=deployed_dr,
+            ),
+            settings=settings,
+            now=now,
+            n_labeled_total=count_labeled(events),
+        )
+        append_report(report, settings.monitoring_report_path)
+
+        # Compute days_since_promote + n_new for the scheduled ceiling.
+        days_since = (
+            (now - as_utc(manifest.promoted_at)).total_seconds() / 86400.0 if manifest else 0.0
+        )
+        n_new = count_labeled_since(events, manifest.promoted_at if manifest else None)
+
+        trigger = evaluate_triggers(
+            report, settings=settings, days_since_promote=days_since, n_new=n_new
+        )
+
+        if not trigger.should_retrain:
+            outcome = RetrainOutcome(
+                promoted=False,
+                trigger=trigger,
+                candidate_metrics={},
+                gate_reason="no trigger fired",
+                report=report,
+            )
+            audit = _audit_row(
+                outcome=outcome,
+                settings=settings,
+                now=now,
+                candidate_dr=None,
+                candidate_dr_lb=None,
+                deployed_dr=deployed_dr,
+            )
+            _append_audit(settings=settings, row=audit)
+            outcome = _with_audit(outcome, audit)
+            return outcome
+
+        # Retrain: fit on reference plus older recent rows; reserve newest recent rows
+        # as an out-of-sample gate holdout so DR is not inflated by training overlap.
+        train_recent_events, gate_events = _split_recent_for_training_and_gate(recent_events)
+        train_events = list(reference_events) + list(train_recent_events)
+        gate_batch = LoggedBatch.from_events(gate_events)
+        weights = _time_decay_weights(train_events, settings=settings, now=now)
+        candidate = _fit_candidate(train_events, settings=settings, weights=weights)
+        candidate_policy = _candidate_policy(
+            candidate,
+            deployed_policy=deployed_policy,
+            settings=settings,
+            train_events=train_events,
+        )
+
+        # Gate on the held-out tail of the recent window.
+        q_hat_candidate = q_matrix(candidate, gate_batch.contexts)
+        baseline_value = _gate_baseline_value(
+            deployed_model=deployed_model,
+            deployed_policy=deployed_policy,
+            gate_batch=gate_batch,
+        )
+        gate_decision = self._gate.evaluate(
+            candidate_policy,
+            gate_batch,
+            q_hat_candidate,
+            baseline_value=baseline_value,
+            rng=np.random.default_rng(settings.seed),
+        )
+
+        candidate_metrics = {
+            "dr": float(gate_decision.candidate["dr"].value),
+            "dr_lb": float(gate_decision.lower_bound),
+            "ips": float(gate_decision.candidate["ips"].value),
+            "dm": float(gate_decision.candidate["dm"].value),
+            "snips": float(gate_decision.candidate["snips"].value),
+            "lift": float(gate_decision.lift),
+        }
+
+        if gate_decision.promote:
+            ts = now.strftime("%Y%m%dT%H%M%S")
+            candidate_dir = settings.model_dir / "candidates" / ts
+            candidate.save(candidate_dir)
+            policy_family = _policy_family(deployed_policy)
+            ensemble = _thompson_ensemble(candidate_policy)
+            if policy_family == "thompson" and ensemble is not None:
+                ensemble.save(candidate_dir)
+            _write_deployed_manifest(
+                settings=settings,
+                model_dir=candidate_dir,
+                dr_value=candidate_metrics["dr"],
+                dr_lb=candidate_metrics["dr_lb"],
+                baseline_value=baseline_value,
+                promoted_at=now,
+                policy_family=policy_family,
+                ethical_wrapper=_is_ethical_policy(deployed_policy),
+            )
+            outcome = RetrainOutcome(
+                promoted=True,
+                trigger=trigger,
+                candidate_metrics=candidate_metrics,
+                gate_reason=gate_decision.reason,
+                candidate_model_dir=str(candidate_dir),
+                report=report,
+            )
+        else:
+            outcome = RetrainOutcome(
+                promoted=False,
+                trigger=trigger,
+                candidate_metrics=candidate_metrics,
+                gate_reason=gate_decision.reason,
+                report=report,
+            )
+        audit = _audit_row(
+            outcome=outcome,
+            settings=settings,
+            now=now,
+            candidate_dr=candidate_metrics["dr"],
+            candidate_dr_lb=candidate_metrics["dr_lb"],
+            deployed_dr=deployed_dr,
+        )
+        _append_audit(settings=settings, row=audit)
+        return _with_audit(outcome, audit)
+
+
+def _read_manifest_safe(settings: Settings) -> DeployedManifest | None:
+    """Return the deployed manifest or ``None`` if absent."""
+    from nba.monitoring.store_reader import read_deployed_manifest  # noqa: PLC0415
+
+    return read_deployed_manifest(settings.deployed_model_manifest)
+
+
+def _audit_row(
+    *,
+    outcome: RetrainOutcome,
+    settings: Settings,  # noqa: ARG001 - kept for future fields
+    now: datetime,
+    candidate_dr: float | None,
+    candidate_dr_lb: float | None,
+    deployed_dr: float | None,
+) -> AuditRow:
+    """Build one :class:`AuditRow` from the retrain outcome."""
+    verdict = "promote" if outcome.promoted else "hold"
+    reasons = outcome.trigger.reasons
+    return AuditRow(
+        timestamp=now,
+        verdict=verdict,
+        reasons=reasons,
+        promoted=outcome.promoted,
+        candidate_dr=candidate_dr,
+        candidate_dr_lb=candidate_dr_lb,
+        deployed_dr=deployed_dr,
+        overlap_ok=outcome.trigger.overlap_ok,
+    )
+
+
+def _with_audit(outcome: RetrainOutcome, audit: AuditRow) -> RetrainOutcome:
+    """Return a copy of ``outcome`` with the audit row attached."""
+    return RetrainOutcome(
+        promoted=outcome.promoted,
+        trigger=outcome.trigger,
+        candidate_metrics=outcome.candidate_metrics,
+        gate_reason=outcome.gate_reason,
+        candidate_model_dir=outcome.candidate_model_dir,
+        report=outcome.report,
+        audit=audit,
+    )
+
+
+def bootstrap_deployed(
+    *, settings: Settings, events: list[BanditEvent], now: datetime | None = None
+) -> tuple[RewardModel, Policy, DeployedManifest, float]:
+    """Public helper: create the initial ``deployed.json`` from a labeled log.
+
+    Used by ``run_retrain_loop.py`` when no manifest exists yet (first-run path).
+    """
+    model, policy, manifest, deployed_dr = _bootstrap_deployed(
+        settings, events=events, now=now
+    )
+    assert manifest is not None
+    model.save(settings.model_dir)
+    return model, policy, manifest, deployed_dr
+
+
+__all__ = [
+    "RetrainLoop",
+    "RetrainOutcome",
+    "bootstrap_deployed",
+    "load_deployed_stack",
+]
+
+
+# Silence unused-import warnings for handles re-exported by callers.
+_: tuple[type, ...] = (EventStore, BootstrapEnsemble, ThompsonSampling)

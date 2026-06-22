@@ -39,3 +39,69 @@ estimate beats baseline but lower bound does not.
 - Thompson often wins DR selection; ε-greedy competitive.
 - Gate promotion is marginal at moderate N — HOLD is normal and correct.
 - Default UCB knobs (`ucb_c=1.0`, `temp=0.25`) flatten toward uniform when q-gaps are O(0.1).
+
+## Phase 18 monitoring metric consistency
+
+`deployed.json` `dr_value` must be the off-policy DR estimate of the deployed policy (same
+`dr()` path as `rolling_dr_drop`). Bootstrapping with on-policy mean realized reward mixed
+metric types and produced spurious `rolling_dr_drop` signals until the first gate promotion.
+Initial bootstrap must also hold out the DR evaluation rows from reward-model fitting (same
+reference/recent gate split as promotion); scoring DR on in-sample reference rows inflated
+the baseline until the first promotion refreshed it.
+
+`deployed.json` stores `policy_family` (`epsilon_greedy`, `ucb`, `thompson`) and
+`ethical_wrapper` so monitor/retrain batch jobs rebuild the same `pi_e` as production serve.
+Legacy manifests without these fields default to `epsilon_greedy` with no ethics wrapper.
+Thompson reloads a persisted `ensemble.json` under `model_dir` when present. Retrain promotion
+must save that artifact when `policy_family` is `thompson`; otherwise the next monitor/retrain
+cycle cannot rebuild the deployed policy without refitting from events.
+
+Retrain promotion gate `_candidate_policy` must rebuild the candidate with the same family as
+the deployed policy (including `EthicalPolicy` wrapper). Using `epsilon_greedy` for every
+candidate skewed `pi_e` and produced apples-to-oranges promote/hold decisions when production
+ran UCB or Thompson sampling.
+
+`deployed.json` `promoted_at` may be timezone-naive (legacy manifests). Normalize via
+`store_reader.as_utc` before subtracting from aware `now` — otherwise `days_since_promote` and
+`nba_deployed_model_age_days` raise `TypeError` and halt scheduled retrain evaluation.
+
+Initial `bootstrap_deployed` must stamp `promoted_at` with wall-clock deploy time, not the
+oldest training-row timestamp. Historical EventStore replays otherwise inherit data age into
+`days_since_promote` / `count_labeled_since` and can fire `scheduled_max_age` immediately.
+When `promoted_at` is after every event timestamp, `_split_windows` falls back to the
+unfiltered reference pool so drift scoring still works on the replayed log.
+
+The drift **reference** slice must also filter to labeled events strictly after `promoted_at`
+(`_split_windows` in `retrain.py`). Pre-promotion rows in the reference window skew PSI,
+calibration deltas, and retrain train splits while scheduled triggers already count only
+post-promote events via `count_labeled_since`.
+
+When all post-promotion events fall inside the recent tail (right after promotion),
+`_split_windows` splits the post-promotion pool into older reference and newer recent
+slices instead of raising `ValueError`.
+
+The drift **recent** slice must honor `monitor_recent_window` when enough labeled rows exist.
+Do not cap `recent_n` at `len(labeled) // 2` — that shrinks drift, overlap, and gate splits
+whenever total labeled count is below twice the configured window. Reserve at least one row
+for reference via `min(monitor_recent_window, len(labeled) - 1)` instead.
+
+`scripts/simulate_drift_demo.py` charted `shift_records` signals must use the same
+`_split_windows` contract (or the `RetrainLoop.run` report directly) — not a fixed pre-drift
+reference tail plus a single shift as recent.
+
+## Phase 18 monitor cadence
+
+`monitor_interval_events` gates `run_monitor.py` / `run_retrain_loop.py`: count labeled rows
+since the latest `drift_reports.jsonl` entry. When the report stores `n_labeled_total`, cadence
+uses log growth (`current_total - n_labeled_total`); if that baseline exceeds the current log
+(store reset, different DB, trimmed logs), fall back to timestamp-based counting. Skip the batch
+job until the count ≥ interval (default 500). `evaluate_monitor_cadence` in `monitoring/cadence.py`
+is the single implementation; the Prometheus exporter surfaces `nba_monitor_*` gauges for ops
+scheduling.
+
+## Drift demo monitor writes
+
+`simulate_drift_demo` frozen shifts must call `RetrainLoop.run` as the sole `drift_reports.jsonl`
+writer per shift. Do not also call `_score_drift` (which appends) on the same shift — that doubles
+report count and skews `n_labeled_total` / events-since-last-report cadence. Use `_score_drift`
+only for post-promote frozen shifts and post-retrain phases where `RetrainLoop` does not run.

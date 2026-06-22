@@ -20,6 +20,26 @@ def test_ensure_dirs_is_idempotent(settings: Settings) -> None:
     assert settings.data_dir.is_dir()
     assert settings.model_dir.is_dir()
     assert settings.db_path.parent.is_dir()
+    # Phase 18 monitoring dirs
+    assert settings.monitoring_report_path.parent.is_dir()
+    assert settings.retrain_audit_path.parent.is_dir()
+    assert settings.deployed_model_manifest.parent.is_dir()
+
+
+def test_phase18_flags_default_off() -> None:
+    """With no env overrides, Phase 18 flags preserve today's byte-identical serve/demo path."""
+    s = Settings()
+    assert s.use_drift_monitoring is False
+    assert s.use_simulated_drift is False
+    assert s.use_monitoring_dashboard is False
+    assert s.metrics_exporter_enabled is False
+    assert s.monitor_reference_window == 20_000
+    assert s.monitor_recent_window == 2_000
+    assert s.retrain_max_age_days == 30
+    assert s.drift_reward_psi_threshold == pytest.approx(0.15)
+    assert s.drift_feature_psi_threshold == pytest.approx(0.20)
+    assert s.metrics_exporter_port == 9091
+    assert s.retrain_time_decay_halflife_days is None
 
 
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:

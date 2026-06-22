@@ -1,0 +1,187 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "NBA Ops — drift signals, overlap health, deployed model age, and retrain audit (Phase 18).",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "1. Deployed model",
+      "id": 1,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Deployed DR lower bound",
+      "id": 2,
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "targets": [{"expr": "nba_deployed_dr_lb", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value"}
+    },
+    {
+      "type": "stat",
+      "title": "Deployed model age (days)",
+      "id": 3,
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "targets": [{"expr": "nba_deployed_model_age_days", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "d"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat",
+      "title": "Labeled events total",
+      "id": 4,
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "targets": [{"expr": "nba_events_labeled_total", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat",
+      "title": "Recent mean reward",
+      "id": 5,
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "targets": [{"expr": "nba_events_recent_mean_reward", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "row",
+      "title": "2. Drift signals",
+      "id": 10,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Drift signals vs thresholds",
+      "id": 11,
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 6},
+      "targets": [
+        {"expr": "nba_drift_reward_psi", "legendFormat": "reward_psi", "refId": "A"},
+        {"expr": "nba_drift_reward_psi_threshold", "legendFormat": "reward_psi threshold", "refId": "B"},
+        {"expr": "nba_drift_calibration_mae_delta", "legendFormat": "calib_delta", "refId": "C"},
+        {"expr": "nba_drift_calibration_drift_threshold", "legendFormat": "calib threshold", "refId": "D"},
+        {"expr": "nba_drift_feature_psi_max", "legendFormat": "feature_psi_max", "refId": "E"},
+        {"expr": "nba_drift_feature_psi_max_threshold", "legendFormat": "feature threshold", "refId": "F"},
+        {"expr": "nba_drift_rolling_dr_drop", "legendFormat": "rolling_dr_drop", "refId": "G"},
+        {"expr": "nba_drift_rolling_dr_drop_threshold", "legendFormat": "dr_drop threshold", "refId": "H"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "title": "Triggered flags (1 = breach)",
+      "id": 12,
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 14},
+      "targets": [
+        {"expr": "nba_drift_signal_triggered", "legendFormat": "{{signal}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "type": "row",
+      "title": "3. Calibration & reward",
+      "id": 20,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 20},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Calibration MAE delta + recent mean reward",
+      "id": 21,
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 21},
+      "targets": [
+        {"expr": "nba_drift_calibration_mae_delta", "legendFormat": "calib Δ", "refId": "A"},
+        {"expr": "nba_events_recent_mean_reward", "legendFormat": "recent mean reward", "refId": "B"}
+      ]
+    },
+    {
+      "type": "row",
+      "title": "4. Overlap & OPE validity",
+      "id": 30,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 28},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Overlap health (min propensity)",
+      "id": 31,
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 29},
+      "targets": [
+        {"expr": "nba_drift_overlap_min_propensity", "legendFormat": "min_p (EventStore)", "refId": "A"},
+        {"expr": "nba_drift_overlap_health", "legendFormat": "overlap_health (drift report)", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "type": "row",
+      "title": "5. Retrain audit",
+      "id": 40,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 35},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Retrain promote count",
+      "id": 41,
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 36},
+      "targets": [{"expr": "nba_retrain_total{verdict=\"promote\"}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat",
+      "title": "Retrain hold count",
+      "id": 42,
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 36},
+      "targets": [{"expr": "nba_retrain_total{verdict=\"hold\"}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["nba", "ops", "drift"],
+  "templating": {"list": []},
+  "time": {"from": "now-15m", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "NBA Ops",
+  "uid": "nba-ops",
+  "version": 1,
+  "weekStart": ""
+}

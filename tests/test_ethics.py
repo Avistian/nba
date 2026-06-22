@@ -18,10 +18,16 @@ from nba.schema import ACTIONS, Action, ProspectContext
 # Fields that must never reach a model: protected/identity/geo.
 _FORBIDDEN_FEATURES = {"lat", "lon", "address_id", "age", "race", "gender", "ethnicity", "zip"}
 # Learning packages that must never see the simulator oracle.
-_LEARNING_PACKAGES = ("reward", "bandits", "ope", "routing", "api", "pipeline")
-_ORACLE_NAMES = {"true_reward", "latent_scores", "true_best_action", "outcome_probs"}
-# Oracle-bearing modules (flat + relational) that learning code must never import from.
-_ORACLE_MODULE_PREFIXES = ("nba.data.sim", "nba.data.relational_sim")
+_LEARNING_PACKAGES = ("reward", "bandits", "ope", "routing", "api", "pipeline", "monitoring")
+_ORACLE_NAMES = {
+    "true_reward",
+    "latent_scores",
+    "true_best_action",
+    "outcome_probs",
+    "apply_drift_to_latent",
+}
+# Oracle-bearing modules (flat + relational + drift) that learning code must never import from.
+_ORACLE_MODULE_PREFIXES = ("nba.data.sim", "nba.data.relational_sim", "nba.data.drift")
 
 
 class _FakeModel:

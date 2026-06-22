@@ -22,7 +22,8 @@ from nba.bandits.epsilon_greedy import EpsilonGreedy
 from nba.config import Settings
 from nba.data import relational_simulator as rel
 from nba.data.ames import load_ames
-from nba.data.simulator import generate_logs, sample_context
+from nba.data.drift import generate_logs_for_settings
+from nba.data.simulator import sample_context
 from nba.ethics import EthicalPolicy
 from nba.eval.oracle import oracle_for
 from nba.pipeline.orchestrator import Orchestrator
@@ -89,10 +90,9 @@ def main() -> None:
 
     print(f"sandbox     : {tmp}")
     print(f"generating  : {args.n_logs:,} logs ({args.dataset}) …")
-    if settings.dataset_mode == "relational":
-        events, _ = rel.generate_logs(args.n_logs, settings=settings, seed=args.seed)
-    else:
-        events = generate_logs(args.n_logs, settings=settings, seed=args.seed)
+    events, _ = generate_logs_for_settings(
+        args.n_logs, settings=settings, seed=args.seed
+    )
 
     model = RewardModel.fit(events, settings=settings)
     model.save(settings.model_dir)

@@ -11,7 +11,12 @@ context x → reward model q(x,a) → bandit policy (explore) → per-door profi
 Every decision logs `(context, action, propensity)`; outcomes append later. Logs feed retraining and
 OPE. **The bandit proposes, the router disposes.**
 
-## Module seams
+## Phase 18 flags
+
+- `use_simulated_drift` gates `DriftSpec` during log generation via
+  `nba.data.drift.resolve_drift_spec` / `generate_logs_for_settings` (grading spec:
+  `GRADING_DRIFT_SPEC`). Scripts and `run_demo` call the helper; explicit `spec=` still
+  overrides for `simulate_drift_demo.py`.
 
 | Seam | Module | Role |
 |------|--------|------|
@@ -34,6 +39,10 @@ OPE. **The bandit proposes, the router disposes.**
 - **Append-only**: no `UPDATE`/`DELETE` on decisions or outcomes.
 - Corrections = new outcome rows; readers take latest by autoincrement id.
 - Full `ProspectContext` stored as JSON for faithful `load_events()` → `BanditEvent` replay.
+- `ingest_bandit_events` skips decisions and outcomes that already exist so bulk replay is idempotent.
+- `simulate_drift_demo.py` writes to `artifacts/drift_demo/*` by default (not the shared production
+  tree at `artifacts/events.db`, `artifacts/models`, `artifacts/monitoring/*`); only the isolated
+  demo db is reset between runs.
 
 ## Determinism
 

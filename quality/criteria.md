@@ -22,7 +22,7 @@ and add categories as the project evolves.
 
 **Source:** Makefile `check` target, project convention
 
-**Last triggered:** 2026-06-12 (Phase 8 completion)
+**Last triggered:** 2026-06-22 (Thompson retrain promotion omitted `ensemble.json`; monitor reload desync)
 
 ---
 
@@ -90,10 +90,12 @@ and add categories as the project evolves.
 - [ ] Every `recommend` path logs `propensity > 0`
 - [ ] Policy `action_dist` has full support (all arms > 0); `validate_dist` used
 - [ ] `LoggedBatch` / store tests still pass for overlap invariants
+- [ ] Retrain `_candidate_policy` matches deployed `policy_family` (and ethics wrapper) so gate
+      compares like-for-like `pi_e`
 
 **Source:** knowledge/bandits-ope/rules.md R1–R3
 
-**Last triggered:** never
+**Last triggered:** 2026-06-22 (candidate always epsilon_greedy vs UCB/Thompson deployed)
 
 ---
 
@@ -142,11 +144,7 @@ and add categories as the project evolves.
 
 **Source:** knowledge/nba-core/rules.md R3, tests/test_store.py
 
-**Last triggered:** never
-
----
-
-## Category: Scope & diff discipline
+**Last triggered:** 2026-06-22 (drift demo must not write to shared production artifact tree)
 
 **Severity:** warning
 

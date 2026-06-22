@@ -85,6 +85,7 @@ Key invariants:
 - **No in-place overwrite** of `model.joblib`. Candidates live under
   `artifacts/models/candidates/<timestamp>/`; promotion updates `deployed.json` atomically.
 - **Same gate** as Phase 5/17: DR lower bound must clear deployed baseline + `min_lift`.
+- **Out-of-sample gate**: candidate fitting excludes the newest recent rows used for OPE/DR.
 - **Append-only audit** at `artifacts/monitoring/retrain_audit.jsonl` — trigger reasons, metrics,
   verdict.
 

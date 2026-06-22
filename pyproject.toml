@@ -49,6 +49,7 @@ packages = ["src/nba"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+exclude = [".cursor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

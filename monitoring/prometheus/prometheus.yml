@@ -1,0 +1,16 @@
+# Prometheus scrape config for the NBA drift-metrics exporter.
+#
+# The exporter runs on the HOST at :9091 (started by
+# `scripts/run_metrics_exporter.py`). Prometheus inside Docker reaches the host
+# via `host.docker.internal` (configured as an extra_host in docker-compose).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "nba-drift-exporter"
+    static_configs:
+      - targets: ["host.docker.internal:9091"]
+        labels:
+          service: "nba"

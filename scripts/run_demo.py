@@ -36,10 +36,8 @@ from nba.bandits.ucb import UCB
 from nba.config import Settings, get_settings
 from nba.data import relational_simulator as rel
 from nba.data.ames import load_ames
-from nba.data.simulator import (
-    generate_logs,
-    sample_context,
-)
+from nba.data.drift import generate_logs_for_settings
+from nba.data.simulator import sample_context
 from nba.ethics import EthicalPolicy
 from nba.eval.oracle import oracle_for
 from nba.ope.estimators import LoggedBatch, q_matrix
@@ -194,12 +192,9 @@ def run_demo(
     """Run the full offline loop for one shift and return a :class:`DemoReport`."""
     settings = (settings or get_settings()).model_copy(update={"seed": seed})
 
-    # 1. Logs → train / held-out split. (Relational mode swaps the simulator behind the flag;
-    #    flat mode — the default — is byte-identical to before.)
-    if settings.dataset_mode == "relational":
-        events, _ = rel.generate_logs(n_logs, settings=settings, seed=seed)
-    else:
-        events = generate_logs(n_logs, settings=settings, seed=seed)
+    # 1. Logs → train / held-out split. Relational mode and ``use_simulated_drift`` are
+    #    resolved by :func:`generate_logs_for_settings` (flat default stays stationary).
+    events, _ = generate_logs_for_settings(n_logs, settings=settings, seed=seed)
     rng = np.random.default_rng(seed)
     perm = rng.permutation(len(events))
     n_val = max(50, len(events) // 5)

@@ -31,6 +31,7 @@ import pandas as pd
 
 from nba.config import Settings
 from nba.data.ames import load_ames
+from nba.data.drift import DriftSpec, apply_drift_to_latent
 from nba.data.simulator import (
     _BASE_DATE,
     _behavior_scores,
@@ -327,7 +328,13 @@ def _flat_sample_outcome(ctx: ProspectContext, action: Action, rng: np.random.Ge
 # Latent ground truth (relational + temporal effects) — ORACLE
 # --------------------------------------------------------------------------------------------- #
 def latent_scores(
-    ctx: ProspectContext, action: Action, *, world: RelationalWorld
+    ctx: ProspectContext,
+    action: Action,
+    *,
+    world: RelationalWorld,
+    spec: DriftSpec | None = None,
+    event_idx: int = 0,
+    n: int = 1,
 ) -> dict[Outcome, float]:
     """Extend the flat latent scores with effects that REQUIRE the graph.
 
@@ -337,6 +344,10 @@ def latent_scores(
     - competitor overlap: a shared-competitor edge depresses CLOSED.
 
     Falls back to the flat effects when an edge set is empty, so a degenerate world == flat world.
+
+    When ``spec`` is provided (Phase 18 simulated drift), the drift step is applied
+    on top of the relational scores — same wrapper as the flat simulator. ``spec=None``
+    leaves the scores unchanged (byte-identical to pre-Phase-18 behaviour).
     """
     scores = _flat_latent_scores(ctx, action)
     if action is Action.SKIP_DOOR:
@@ -352,14 +363,25 @@ def latent_scores(
     scores[Outcome.CLOSED] += 0.5 * proof + 0.3 * momentum - 0.4 * fatigue - 0.6 * competitor
     scores[Outcome.INFO] += 0.2 * momentum
     scores[Outcome.SLAMMED] += 0.6 * fatigue
+
+    if spec is not None:
+        scores = apply_drift_to_latent(
+            scores, spec=spec, event_idx=event_idx, n=n, ctx=ctx, action=action
+        )
     return scores
 
 
 def outcome_probs(
-    ctx: ProspectContext, action: Action, *, world: RelationalWorld
+    ctx: ProspectContext,
+    action: Action,
+    *,
+    world: RelationalWorld,
+    spec: DriftSpec | None = None,
+    event_idx: int = 0,
+    n: int = 1,
 ) -> dict[Outcome, float]:
     """Softmax of :func:`latent_scores` — the relational ground-truth outcome distribution."""
-    scores = latent_scores(ctx, action, world=world)
+    scores = latent_scores(ctx, action, world=world, spec=spec, event_idx=event_idx, n=n)
     arr = np.array([scores[o] for o in _OUTCOMES], dtype=np.float64)
     arr -= arr.max()
     exp = np.exp(arr)
@@ -368,23 +390,47 @@ def outcome_probs(
 
 
 def sample_outcome(
-    ctx: ProspectContext, action: Action, rng: np.random.Generator, *, world: RelationalWorld
+    ctx: ProspectContext,
+    action: Action,
+    rng: np.random.Generator,
+    *,
+    world: RelationalWorld,
+    spec: DriftSpec | None = None,
+    event_idx: int = 0,
+    n: int = 1,
 ) -> Outcome:
     """Draw an outcome from the relational ground-truth distribution."""
-    probs = outcome_probs(ctx, action, world=world)
+    probs = outcome_probs(ctx, action, world=world, spec=spec, event_idx=event_idx, n=n)
     idx = int(rng.choice(len(_OUTCOMES), p=np.array([probs[o] for o in _OUTCOMES])))
     return _OUTCOMES[idx]
 
 
-def true_reward(ctx: ProspectContext, action: Action, *, world: RelationalWorld) -> float:
+def true_reward(
+    ctx: ProspectContext,
+    action: Action,
+    *,
+    world: RelationalWorld,
+    spec: DriftSpec | None = None,
+    event_idx: int = 0,
+    n: int = 1,
+) -> float:
     """Expected reward of ``action`` at ``ctx`` under the relational oracle."""
-    probs = outcome_probs(ctx, action, world=world)
+    probs = outcome_probs(ctx, action, world=world, spec=spec, event_idx=event_idx, n=n)
     return float(sum(probs[o] * REWARD[o] for o in _OUTCOMES))
 
 
-def true_best_action(ctx: ProspectContext, *, world: RelationalWorld) -> Action:
+def true_best_action(
+    ctx: ProspectContext,
+    *,
+    world: RelationalWorld,
+    spec: DriftSpec | None = None,
+    event_idx: int = 0,
+    n: int = 1,
+) -> Action:
     """The oracle-optimal action at ``ctx`` (argmax expected reward) under the relational world."""
-    return max(ACTIONS, key=lambda a: true_reward(ctx, a, world=world))
+    return max(
+        ACTIONS, key=lambda a: true_reward(ctx, a, world=world, spec=spec, event_idx=event_idx, n=n)
+    )
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -423,20 +469,28 @@ def behavior_policy(
 # Event generation + DataFrame I/O (schema-identical to the flat simulator)
 # --------------------------------------------------------------------------------------------- #
 def generate_logs(
-    n: int, *, settings: Settings, seed: int, temp: float = 0.5
+    n: int,
+    *,
+    settings: Settings,
+    seed: int,
+    temp: float = 0.5,
+    spec: DriftSpec | None = None,
 ) -> tuple[list[BanditEvent], RelationalWorld]:
     """Generate ``n`` reproducible relational events plus the :class:`RelationalWorld` behind them.
 
     The emitted :class:`~nba.schema.BanditEvent`s are schema-identical to the flat ones; the extra
     relational structure is carried alongside in the returned world (and graph artifacts).
+
+    When ``spec`` is provided (Phase 18 simulated drift), drift is applied to the relational
+    ground-truth outcome distribution. ``spec=None`` keeps the pre-Phase-18 behaviour.
     """
     world = sample_world(n, settings=settings, seed=seed)
     rng = np.random.default_rng(seed + 10_000)
     events: list[BanditEvent] = []
-    for ctx in world.contexts.values():
+    for i, ctx in enumerate(world.contexts.values()):
         clock = _BASE_DATE + timedelta(minutes=int(rng.integers(0, 60 * 24 * 14)))
         action, propensity = behavior_policy(ctx, rng, world=world, temp=temp)
-        outcome = sample_outcome(ctx, action, rng, world=world)
+        outcome = sample_outcome(ctx, action, rng, world=world, spec=spec, event_idx=i, n=n)
         events.append(
             BanditEvent(
                 context=ctx,
