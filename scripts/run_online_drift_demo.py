@@ -211,7 +211,7 @@ def run_one_tick(
         tick=tick,
         n_new_events=n_ingested,
         n_total_labeled=len([e for e in cumulative if e.reward is not None]),
-        promoted=tick_promoted or promoted,
+        promoted=tick_promoted,
         trigger_fired=trigger_fired,
         trigger_reasons=trigger_reasons,
         reward_psi=signals.get("reward_psi", 0.0),

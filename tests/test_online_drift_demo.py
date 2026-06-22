@@ -137,3 +137,43 @@ def test_run_one_tick_grows_event_store(tmp_path: Path) -> None:
     assert outcome.n_new_events == 50
     assert outcome.n_total_labeled == 350
     assert len(cumulative) == 350
+
+
+def test_post_promote_tick_outcome_is_hold_not_promote(tmp_path: Path) -> None:
+    """After promotion, monitor-only ticks must not report promoted=True."""
+    settings = demo_settings(_settings(tmp_path))
+    settings.ensure_dirs()
+    reset_demo_tree(settings)
+
+    warmup = generate_logs(300, settings=settings, seed=1)
+    from drift_demo_common import ingest_events_incremental  # noqa: E402
+
+    ingest_events_incremental(settings, warmup)
+    model, policy, _manifest, baseline_dr = bootstrap_deployed(
+        settings=settings, events=warmup
+    )
+    loop = RetrainLoop(
+        settings=settings,
+        gate=PromotionGate(z=settings.ope_z, min_lift=settings.ope_min_lift),
+    )
+
+    outcome, *_ = run_one_tick(
+        tick=5,
+        settings=settings,
+        cumulative=list(warmup),
+        deployed_model=model,
+        deployed_policy=policy,
+        baseline_dr=baseline_dr,
+        loop=loop,
+        promoted=True,
+        events_per_tick=50,
+        drift_mode="step",
+        drift_onset=1,
+        total_ticks=8,
+        seed=3,
+        send_email=False,
+        clock=datetime(2026, 6, 22, 16, 0, tzinfo=UTC),
+    )
+
+    assert outcome.phase == "post_retrain"
+    assert not outcome.promoted
