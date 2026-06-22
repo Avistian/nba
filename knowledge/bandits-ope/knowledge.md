@@ -52,7 +52,9 @@ the baseline until the first promotion refreshed it.
 `deployed.json` stores `policy_family` (`epsilon_greedy`, `ucb`, `thompson`) and
 `ethical_wrapper` so monitor/retrain batch jobs rebuild the same `pi_e` as production serve.
 Legacy manifests without these fields default to `epsilon_greedy` with no ethics wrapper.
-Thompson reloads a persisted `ensemble.json` under `model_dir` when present.
+Thompson reloads a persisted `ensemble.json` under `model_dir` when present. Retrain promotion
+must save that artifact when `policy_family` is `thompson`; otherwise the next monitor/retrain
+cycle cannot rebuild the deployed policy without refitting from events.
 
 Retrain promotion gate `_candidate_policy` must rebuild the candidate with the same family as
 the deployed policy (including `EthicalPolicy` wrapper). Using `epsilon_greedy` for every

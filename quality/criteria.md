@@ -22,7 +22,7 @@ and add categories as the project evolves.
 
 **Source:** Makefile `check` target, project convention
 
-**Last triggered:** 2026-06-22 (drift demo duplicate drift_reports.jsonl per frozen shift; shift_records aligned with RetrainLoop windows)
+**Last triggered:** 2026-06-22 (Thompson retrain promotion omitted `ensemble.json`; monitor reload desync)
 
 ---
 

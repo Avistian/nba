@@ -963,6 +963,92 @@ def test_retrain_gate_uses_matching_policy_family_not_epsilon_greedy(
     assert captured["candidate_type"] is not EpsilonGreedy
 
 
+def test_promote_thompson_saves_ensemble_artifact(tmp_path: Path) -> None:
+    """Promoting a thompson deployment must persist ensemble.json in the candidate dir."""
+    settings = _settings(tmp_path).model_copy(update={"n_bootstrap": 2})
+
+    class _ForcePromoteGate(PromotionGate):
+        def evaluate(
+            self,
+            candidate: Any,
+            batch: LoggedBatch,
+            q_hat: np.ndarray,
+            *,
+            baseline_value: float,
+            clip: float | None = None,
+            rng: np.random.Generator | None = None,
+        ) -> GateDecision:
+            decision = super().evaluate(
+                candidate,
+                batch,
+                q_hat,
+                baseline_value=baseline_value,
+                clip=clip,
+                rng=rng,
+            )
+            return GateDecision(
+                promote=True,
+                candidate=decision.candidate,
+                baseline_value=decision.baseline_value,
+                lift=decision.lift,
+                lower_bound=decision.lower_bound,
+                reason=decision.reason,
+            )
+
+    events = generate_logs(3000, settings=settings, seed=7)
+    train = events[:2500]
+    deployed = RewardModel.fit(train, settings=settings)
+    ensemble = BootstrapEnsemble.fit(train, settings=settings, n_models=settings.n_bootstrap)
+    deployed_policy = ThompsonSampling(ensemble, rng=np.random.default_rng(7))
+    settings.ensure_dirs()
+    deployed.save(settings.model_dir)
+    ensemble.save(settings.model_dir)
+    baseline_dr = float(np.mean([e.reward for e in train[-1000:] if e.reward is not None]))
+    promoted_at = min(e.timestamp for e in events) - timedelta(hours=1)
+    settings.deployed_model_manifest.write_text(
+        json.dumps(
+            {
+                "model_dir": str(settings.model_dir),
+                "promoted_at": promoted_at.isoformat(),
+                "dr_value": baseline_dr,
+                "dr_lower_bound": baseline_dr - 0.01,
+                "baseline_value": baseline_dr,
+                "feature_names": [],
+                "policy_family": "thompson",
+                "ethical_wrapper": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = settings.model_copy(
+        update={
+            "drift_reward_psi_threshold": 0.0,
+            "drift_calibration_delta_threshold": -1.0,
+        }
+    )
+    loop = RetrainLoop(settings=settings, gate=_ForcePromoteGate(z=1.96, min_lift=0.0))
+    outcome = loop.run(
+        deployed_model=deployed,
+        deployed_policy=deployed_policy,
+        events=events,
+        deployed_dr=baseline_dr,
+    )
+
+    assert outcome.promoted
+    assert outcome.candidate_model_dir is not None
+    candidate_dir = Path(outcome.candidate_model_dir)
+    assert (candidate_dir / "ensemble.json").exists()
+
+    manifest = read_deployed_manifest(settings.deployed_model_manifest)
+    assert manifest is not None
+    assert manifest.policy_family == "thompson"
+    assert manifest.model_dir == str(candidate_dir)
+
+    _model, policy, _manifest, _deployed_dr = load_deployed_stack(settings=settings)
+    assert isinstance(policy, ThompsonSampling)
+
+
 def test_load_deployed_stack_thompson_differs_from_epsilon_pi_e(tmp_path: Path) -> None:
     """Rebuilding thompson as epsilon_greedy skews pi_e and rolling_dr_drop."""
     settings = _settings(tmp_path)

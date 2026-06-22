@@ -60,3 +60,12 @@ Hard-coding `EpsilonGreedy` skews `pi_e`, `rolling_dr_drop`, and promotion-gate 
 production serves Thompson, UCB, or an ethics wrapper.
 
 *Confirmed: `test_load_deployed_stack_thompson_differs_from_epsilon_pi_e`, 2026-06-22.*
+
+## R9: Thompson promotion must persist `ensemble.json`
+
+When `policy_family` is `thompson`, the retrain promotion path must write the candidate
+`BootstrapEnsemble` to the candidate `model_dir` alongside the reward model. The manifest alone
+is insufficient — `load_deployed_stack` rebuilds Thompson from `ensemble.json` or refits from
+events, which desynchronizes monitoring when events are unavailable.
+
+*Confirmed: `test_promote_thompson_saves_ensemble_artifact`, 2026-06-22.*

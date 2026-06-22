@@ -429,6 +429,14 @@ def _gate_baseline_value(
     return float(dr(gate_batch, q_hat_deployed, pi_e_deployed).value)
 
 
+def _thompson_ensemble(policy: Policy) -> BootstrapEnsemble | None:
+    """Return the bootstrap ensemble backing a Thompson policy, if any."""
+    inner = getattr(policy, "_inner", policy)
+    if isinstance(inner, ThompsonSampling):
+        return inner._ensemble
+    return None
+
+
 def _candidate_policy(
     candidate: RewardModel,
     *,
@@ -567,6 +575,10 @@ class RetrainLoop:
             ts = now.strftime("%Y%m%dT%H%M%S")
             candidate_dir = settings.model_dir / "candidates" / ts
             candidate.save(candidate_dir)
+            policy_family = _policy_family(deployed_policy)
+            ensemble = _thompson_ensemble(candidate_policy)
+            if policy_family == "thompson" and ensemble is not None:
+                ensemble.save(candidate_dir)
             _write_deployed_manifest(
                 settings=settings,
                 model_dir=candidate_dir,
@@ -574,7 +586,7 @@ class RetrainLoop:
                 dr_lb=candidate_metrics["dr_lb"],
                 baseline_value=baseline_value,
                 promoted_at=now,
-                policy_family=_policy_family(deployed_policy),
+                policy_family=policy_family,
                 ethical_wrapper=_is_ethical_policy(deployed_policy),
             )
             outcome = RetrainOutcome(
