@@ -58,7 +58,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    settings = get_settings()
+    settings = get_settings().model_copy(update={"dataset_mode": "relational"})
     events, world = generate_logs_for_settings(
         args.n, settings=settings, seed=args.seed, temp=args.temp
     )
