@@ -28,6 +28,7 @@ phase can be implemented (TDD) without re-deriving design.
 | 16 | [phase-16-decision-focused-rdl.md](phase-16-decision-focused-rdl.md) | 12, 14 | Decision-focused RDL fusion (deferred) |
 | 17 | [phase-17-experiment-leaderboard.md](phase-17-experiment-leaderboard.md) | 9, 5, 8 (after Phase 9, before upgrades) | Append-only leaderboard: lift/regression per experiment |
 | 18 | [phase-18-drift-monitoring-retrain-loop.md](phase-18-drift-monitoring-retrain-loop.md) | 3, 5, 7, 8, 17 (after Phase 17, before/up parallel with upgrades) | Drift signals, monitor, conditional retrain + DR gate, drift sim demo, **Grafana ops dashboard** |
+| 19 | [phase-19-online-drift-demo.md](phase-19-online-drift-demo.md) | 18 (after Phase 18) | **Live-streaming** drift demo, email alert on significant drift, Grafana animation |
 
 Phases 9–16 are the improvement roadmap from [../docs/11](../docs/11-improving-nba-spatio-relational-optimization.md)
 and [../docs/12](../docs/12-relational-deep-learning-mixin.md): each is **feature-flagged, off by

@@ -21,8 +21,13 @@ import pandas as pd  # noqa: E402
 from nba.api.store import EventStore  # noqa: E402
 from nba.config import Settings  # noqa: E402
 from nba.data.simulator import frame_to_events  # noqa: E402
+from nba.monitoring.alerting import maybe_alert_drift  # noqa: E402
 from nba.monitoring.cadence import evaluate_monitor_cadence  # noqa: E402
-from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed, load_deployed_stack  # noqa: E402
+from nba.monitoring.retrain import (  # noqa: E402
+    RetrainLoop,
+    bootstrap_deployed,
+    load_deployed_stack,
+)
 from nba.monitoring.store_reader import read_deployed_manifest  # noqa: E402
 from nba.ope.gate import PromotionGate  # noqa: E402
 from nba.schema import BanditEvent  # noqa: E402
@@ -50,6 +55,11 @@ def main() -> None:
         "--force",
         action="store_true",
         help="run even when fewer than monitor_interval_events labeled rows arrived",
+    )
+    parser.add_argument(
+        "--no-email",
+        action="store_true",
+        help="skip the significant-drift email alert",
     )
     args = parser.parse_args()
 
@@ -107,6 +117,15 @@ def main() -> None:
     print(f"  gate_reason: {outcome.gate_reason}")
     if outcome.candidate_model_dir:
         print(f"  candidate_model_dir: {outcome.candidate_model_dir}")
+
+    if not args.no_email and outcome.report is not None:
+        alert = maybe_alert_drift(
+            outcome.report,
+            outcome.trigger,
+            outcome,
+            settings=settings,
+        )
+        print(f"  alert: {alert.reason}" + (" (sent)" if alert.sent else ""))
 
 
 if __name__ == "__main__":

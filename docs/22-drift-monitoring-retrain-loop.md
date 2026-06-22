@@ -8,7 +8,7 @@
 Build this **right after the experiment leaderboard** ([Phase 17](21-experiment-leaderboard.md)) and
 **before or in parallel with the value/routing upgrades** (Phases 10–16). Order: **9 → 17 → 18 → 10–16**.
 
-> **Status: planned.** The teaching demos (`run_demo`, `my_territory_demo`) retrain from scratch each
+> **Status: built.** The teaching demos (`run_demo`, `my_territory_demo`) retrain from scratch each
 > run for self-containment. That is **not** production ops. Phase 18 specifies the real pattern:
 > conditional retrain triggered by evidence, not a daily cron.
 

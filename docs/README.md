@@ -47,7 +47,9 @@ adapt to a non-stationary world. It combines four disciplines:
 | 19 | [19-neural-combinatorial-optimization.md](19-neural-combinatorial-optimization.md) | **Phase 15 (deferred):** an attention encoder-decoder router with OR-Tools as the test oracle — build only at fleet scale. |
 | 20 | [20-decision-focused-rdl.md](20-decision-focused-rdl.md) | **Phase 16 (deferred):** the research frontier — train the GNN end-to-end through the orienteering optimizer. |
 | 21 | [21-experiment-leaderboard.md](21-experiment-leaderboard.md) | **Phase 17 build (✅ built):** the append-only experiment leaderboard that judges every phase a **lift, regression, or neutral** vs the baseline through the DR gate. |
-| 22 | [22-drift-monitoring-retrain-loop.md](22-drift-monitoring-retrain-loop.md) | **Phase 18 build (planned):** drift signals on append-only logs, **conditional** retrain (not daily), DR-gated promotion, simulated drift demo (monitor fire → retrain → recovery), and optional **Grafana + Prometheus ops dashboard**. |
+| 22 | [22-drift-monitoring-retrain-loop.md](22-drift-monitoring-retrain-loop.md) | **Phase 18 build (✅ built):** drift signals on append-only logs, **conditional** retrain (not daily), DR-gated promotion, simulated drift demo, and optional **Grafana + Prometheus ops dashboard**. |
+| 23 | [23-online-drift-demo.md](23-online-drift-demo.md) | **Phase 19 build (✅ built):** live-streaming drift demo — watch signals climb on Grafana in real time, email alert on significant drift. |
+| 24 | [24-monitoring-operator-guide.md](24-monitoring-operator-guide.md) | **Operator guide:** how to run monitor/retrain, read Grafana, configure email alerts, and use batch vs online demos. |
 
 ## Core idea in one diagram
 
