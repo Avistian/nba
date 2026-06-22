@@ -91,3 +91,10 @@ uses log growth (`current_total - n_labeled_total`); if that baseline exceeds th
 job until the count ≥ interval (default 500). `evaluate_monitor_cadence` in `monitoring/cadence.py`
 is the single implementation; the Prometheus exporter surfaces `nba_monitor_*` gauges for ops
 scheduling.
+
+## Drift demo monitor writes
+
+`simulate_drift_demo` frozen shifts must call `RetrainLoop.run` as the sole `drift_reports.jsonl`
+writer per shift. Do not also call `_score_drift` (which appends) on the same shift — that doubles
+report count and skews `n_labeled_total` / events-since-last-report cadence. Use `_score_drift`
+only for post-promote frozen shifts and post-retrain phases where `RetrainLoop` does not run.
