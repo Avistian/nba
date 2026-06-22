@@ -159,6 +159,49 @@ class EventStore:
         """Number of recorded outcome rows (corrections included)."""
         return int(self._conn.execute("SELECT COUNT(*) FROM outcomes").fetchone()[0])
 
+    def ingest_bandit_events(
+        self, events: list[BanditEvent], *, policy_name: str = "logged"
+    ) -> int:
+        """Bulk-insert labeled :class:`BanditEvent`s (demo/replay path).
+
+        Preserves each event's ``decision_id`` and timestamp. Skips rows without
+        outcomes. Uses ``INSERT OR IGNORE`` on decisions so re-ingesting is safe.
+        """
+        n = 0
+        with self._lock:
+            for event in events:
+                if event.outcome is None or event.reward is None:
+                    continue
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO decisions "
+                    "(decision_id, ts, address_id, lat, lon, context_json, "
+                    "action, propensity, policy_name) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        event.decision_id,
+                        event.timestamp.isoformat(),
+                        event.context.address_id,
+                        event.context.lat,
+                        event.context.lon,
+                        event.context.model_dump_json(),
+                        event.action.value,
+                        float(event.propensity),
+                        policy_name,
+                    ),
+                )
+                self._conn.execute(
+                    "INSERT INTO outcomes (decision_id, ts, outcome, reward) VALUES (?, ?, ?, ?)",
+                    (
+                        event.decision_id,
+                        event.timestamp.isoformat(),
+                        event.outcome.value,
+                        float(event.reward),
+                    ),
+                )
+                n += 1
+            self._conn.commit()
+        return n
+
     def close(self) -> None:
         """Close the underlying connection."""
         self._conn.close()

@@ -1,0 +1,35 @@
+# Optional dev-only monitoring stack for Phase 18 drift monitoring.
+#
+# Brings up Grafana OSS + Prometheus so the provisioned "NBA Ops" dashboard can
+# visualize the metrics exporter (`scripts/run_metrics_exporter.py`) running on
+# the host at :9091. NOT started by `make test` or the serve API; use
+# `./scripts/monitoring_stack.sh up` to bring it up.
+#
+# Requires Docker + the `docker compose` plugin on the host.
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: nba-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: nba-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped

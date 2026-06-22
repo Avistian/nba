@@ -61,9 +61,50 @@ class Settings(BaseSettings):
     sensitive_prior_interactions: int = 4  # >= this many prior contacts flags a door sensitive
     sensitive_exploration_ceiling: float = 0.05  # max non-greedy mass allowed in a sensitive door
 
+    # Phase 18 — drift monitoring + conditional retrain loop. All flags default OFF so the
+    # serve/demo path is byte-identical to Phases 0-8/9/17. Setting ``use_drift_monitoring=1``
+    # activates the monitor/retrain batch job; it never touches the hot serve path.
+    use_drift_monitoring: bool = False
+    # gate ``DriftSpec`` injection in log generation (demos/grading)
+    use_simulated_drift: bool = False
+    # cap on events in the reference slice (since last promote)
+    monitor_reference_window: int = 20_000
+    monitor_recent_window: int = 2_000  # recent events scored for drift
+    # run the monitor after this many new labeled outcomes
+    monitor_interval_events: int = 500
+    # minimum new labeled rows before a scheduled/drift retrain
+    retrain_min_new_events: int = 2_000
+    # scheduled safety retrain if no drift signal but data is stale
+    retrain_max_age_days: int = 30
+    drift_reward_psi_threshold: float = 0.15  # reward PSI trigger
+    drift_calibration_delta_threshold: float = 0.05  # calibration MAE increase trigger
+    drift_calibration_absolute_max: float = 0.12  # recent MAE absolute ceiling trigger
+    drift_feature_psi_threshold: float = 0.20  # feature PSI (max over allow-list) trigger
+    drift_rolling_dr_drop_threshold: float = 0.03  # rolling DR drop trigger (absolute)
+    drift_min_propensity_floor: float = 0.02  # overlap warning floor
+    drift_min_ess_fraction: float = 0.05  # ESS/n warning floor
+    # optional sample weights for fit; None=uniform
+    retrain_time_decay_halflife_days: float | None = None
+    monitoring_report_path: Path = Path("artifacts/monitoring/drift_reports.jsonl")
+    retrain_audit_path: Path = Path("artifacts/monitoring/retrain_audit.jsonl")
+    deployed_model_manifest: Path = Path("artifacts/models/deployed.json")
+
+    # Optional read-only observability stack. Off by default so tests and CI never need Docker.
+    use_monitoring_dashboard: bool = False  # when on, documents/starts the optional Grafana stack
+    metrics_exporter_enabled: bool = False  # expose Prometheus /metrics from drift JSONL + rollups
+    metrics_exporter_port: int = 9091
+    metrics_refresh_seconds: int = 30  # how often the exporter re-reads artifacts between scrapes
+
     def ensure_dirs(self) -> None:
         """Create all configured output directories. Idempotent."""
-        for path in (self.data_dir, self.model_dir, self.db_path.parent):
+        for path in (
+            self.data_dir,
+            self.model_dir,
+            self.db_path.parent,
+            self.monitoring_report_path.parent,
+            self.retrain_audit_path.parent,
+            self.deployed_model_manifest.parent,
+        ):
             path.mkdir(parents=True, exist_ok=True)
 
 
