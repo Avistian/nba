@@ -6,7 +6,8 @@ and **before or in parallel with Phases 10–16** — it closes the production l
 *simulate*: serve with a **frozen** model by default, **monitor** accumulated logs for drift, and
 **retrain + promote only when signals fire** (or a scheduled safety ceiling is reached), always through
 the same DR gate. Step-by-step build in
-[docs/22](../docs/22-drift-monitoring-retrain-loop.md).
+[docs/22](../docs/22-drift-monitoring-retrain-loop.md). **Day-to-day usage:**
+[docs/24-monitoring-operator-guide.md](../docs/24-monitoring-operator-guide.md).
 
 > **Not daily retrain.** A normal shift loads `artifacts/models/` and appends decisions/outcomes.
 > Retraining is a **batch job triggered by evidence**, not the default morning routine. The
@@ -454,13 +455,15 @@ loop engages; the monitor-only row (no retrain allowed) should **regress** vs ba
 
 ## Acceptance
 
-- [ ] `use_drift_monitoring=False` leaves serve/demo paths byte-identical.
-- [ ] `run_monitor.py` appends a `DriftReport` row with all five signals and pass/fail flags.
-- [ ] Retrain runs **only** when `RetrainTrigger.should_retrain` is true (unit-tested).
-- [ ] Promoted candidate clears the same `PromotionGate` as Phase 5/17; HOLD leaves `deployed.json` unchanged.
-- [ ] `simulate_drift_demo.py` shows monitor firing post-drift and metric recovery after promote.
-- [ ] Oracle symbols in `data/drift.py` stay out of learning modules (extend ethics guard if needed).
-- [ ] `run_metrics_exporter.py --once` emits valid Prometheus text from synthetic drift artifacts (no Docker).
-- [ ] `monitoring/grafana/dashboards/nba-ops.json` imports cleanly; panels plot all five drift signals with thresholds.
-- [ ] `use_monitoring_dashboard=False` → `make test` and serve API require no Docker daemon.
-- [ ] `ruff` / `pyright` clean; `pytest` green.
+- [x] `use_drift_monitoring=False` leaves serve/demo paths byte-identical.
+- [x] `run_monitor.py` appends a `DriftReport` row with all five signals and pass/fail flags.
+- [x] Retrain runs **only** when `RetrainTrigger.should_retrain` is true (unit-tested).
+- [x] Promoted candidate clears the same `PromotionGate` as Phase 5/17; HOLD leaves `deployed.json` unchanged.
+- [x] `simulate_drift_demo.py` shows monitor firing post-drift and metric recovery after promote.
+- [x] Oracle symbols in `data/drift.py` stay out of learning modules (extend ethics guard if needed).
+- [x] `run_metrics_exporter.py --once` emits valid Prometheus text from synthetic drift artifacts (no Docker).
+- [x] `monitoring/grafana/dashboards/nba-ops.json` imports cleanly; panels plot all five drift signals with thresholds.
+- [x] `use_monitoring_dashboard=False` → `make test` and serve API require no Docker daemon.
+- [x] `ruff` / `pyright` clean; `pytest` green.
+
+**Follow-on:** [Phase 19](phase-19-online-drift-demo.md) (live demo + email) · [operator guide](../docs/24-monitoring-operator-guide.md)

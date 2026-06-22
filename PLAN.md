@@ -120,10 +120,11 @@ Phases 9–16 implement the upgrade roadmap from
 flag and preserves every rail (no oracle leak, ethics allow-list, calibration, DR promotion gate).
 Per-phase specs live in [plans/](plans); step-by-step build docs in [docs/](docs).
 
-**Build order: relational dataset → leaderboard → drift loop → upgrades.** The relational dataset
+**Build order: relational dataset → leaderboard → drift loop → online demo → upgrades.** The relational dataset
 (Phase 9) is built first; the experiment leaderboard (Phase 17) is built **right after it** so it can
 grade experiments on both the flat and relational datasets; Phase 18 adds **drift monitoring and
 conditional retraining** (serve frozen, retrain only when signals fire, promote through the DR gate);
+Phase 19 adds a **live-streaming drift demo**, email alerts on significant drift, and an operator guide;
 then each upgrade (Phases 10-16) must be tested **and prove its value** on that leaderboard before
 adoption. (Phase numbers are stable IDs — like Phase 6 "parallel with 3-5", build order follows
 dependencies, not the file number.)
@@ -184,7 +185,7 @@ and before any upgrade, which must each prove value here. Grading reaches the or
 the `baseline` and a `phase09-relational` row (a deliberate **neutral** — the dataset is a substrate,
 not a value change).
 
-### Phase 18 — Drift monitoring + conditional retraining loop *(depends 3, 5, 7, 8, 17; built after Phase 17, before/up parallel with upgrades)* — [plan](plans/phase-18-drift-monitoring-retrain-loop.md) · [doc](docs/22-drift-monitoring-retrain-loop.md)
+### Phase 18 — Drift monitoring + conditional retraining loop *(depends 3, 5, 7, 8, 17; built after Phase 17, before/up parallel with upgrades)* — ✅ **built** — [plan](plans/phase-18-drift-monitoring-retrain-loop.md) · [doc](docs/22-drift-monitoring-retrain-loop.md) · [operator guide](docs/24-monitoring-operator-guide.md)
 The **operational ML loop** missing from the teaching demos: serve with a **frozen** deployed model,
 score drift on append-only logs (reward PSI, calibration degradation, feature covariate shift, overlap
 health, optional rolling DR), **retrain only when triggers fire** (not daily), gate the candidate
@@ -195,6 +196,13 @@ dashboard** (provisioned `nba-ops.json`, Prometheus exporter on `:9091`, Docker 
 that visualizes drift signals, overlap health, and retrain audit — off by default, no Docker in CI.
 Flags `use_drift_monitoring`, `use_simulated_drift`, `use_monitoring_dashboard`, `metrics_exporter_enabled`
 (off by default).
+
+### Phase 19 — Online drift demo + email alerting *(depends 18; built after Phase 18)* — ✅ **built** — [plan](plans/phase-19-online-drift-demo.md) · [doc](docs/23-online-drift-demo.md) · [operator guide](docs/24-monitoring-operator-guide.md)
+Turns the batch drift narrative into a **wall-clock live stream** (`run_online_drift_demo.py`): events
+tick into an isolated `artifacts/drift_demo/` tree, one `DriftReport` per tick for live Grafana
+animation, **debounced email alerts** on significant drift (`alerting.py`, dry-run without SMTP creds),
+and shared demo helpers in `drift_demo_common.py`. Makefile targets: `online-drift-demo`,
+`metrics-exporter-demo`. Does not change the serve path.
 
 ## Verification matrix
 
@@ -223,12 +231,14 @@ Flags `use_drift_monitoring`, `use_simulated_drift`, `use_monitoring_dashboard`,
 | RDL model promotes only via the same DR gate on route value | `tests/test_graph_model.py` (Phase 14) | ⏳ planned |
 | Every phase logs a lift/regression leaderboard row vs baseline | `tests/test_leaderboard.py` (Phase 17) | ✅ |
 | Leaderboard is append-only; lift requires primary-metric gain + DR gate | `tests/test_leaderboard.py` (Phase 17) | ✅ |
-| Drift monitor scores reference vs recent; retrain only on trigger | `tests/test_monitoring_signals.py`, `tests/test_retrain_loop.py` (Phase 18) | ⏳ planned |
-| Retrain candidate promotes only via DR gate; HOLD leaves deployed manifest | `tests/test_retrain_loop.py` (Phase 18) | ⏳ planned |
-| Simulated drift demo: frozen degrades, monitor fires, retrain recovers | `tests/test_drift_simulator.py`, `scripts/simulate_drift_demo.py` (Phase 18) | ⏳ planned |
-| `use_drift_monitoring=False` leaves serve path unchanged | per-phase tests (Phase 18) | ⏳ planned |
-| Prometheus exporter emits drift gauges from JSONL artifacts (no Docker) | `tests/test_monitoring_exporter.py` (Phase 18) | ⏳ planned |
-| Grafana `nba-ops` dashboard plots all drift signals + retrain audit | `monitoring/grafana/dashboards/nba-ops.json` (Phase 18) | ⏳ planned |
+| Drift monitor scores reference vs recent; retrain only on trigger | `tests/test_monitoring_signals.py`, `tests/test_retrain_loop.py` (Phase 18) | ✅ |
+| Retrain candidate promotes only via DR gate; HOLD leaves deployed manifest | `tests/test_retrain_loop.py` (Phase 18) | ✅ |
+| Simulated drift demo: frozen degrades, monitor fires, retrain recovers | `tests/test_drift_simulator.py`, `scripts/simulate_drift_demo.py` (Phase 18) | ✅ |
+| `use_drift_monitoring=False` leaves serve path unchanged | per-phase tests (Phase 18) | ✅ |
+| Prometheus exporter emits drift gauges from JSONL artifacts (no Docker) | `tests/test_monitoring_exporter.py` (Phase 18) | ✅ |
+| Grafana `nba-ops` dashboard plots all drift signals + retrain audit | `monitoring/grafana/dashboards/nba-ops.json` (Phase 18) | ✅ |
+| Online drift demo streams live-stamped events; one report per tick | `tests/test_online_drift_demo.py`, `scripts/run_online_drift_demo.py` (Phase 19) | ✅ |
+| Email alert on significant drift (debounced; dry-run without SMTP) | `tests/test_monitoring_alerting.py` (Phase 19) | ✅ |
 
 † The PLAN originally framed this as "cumulative regret trends down." That downward *curve* is an
 **online-learning** phenomenon (the model improving across many rounds). A single deployed shift
@@ -238,11 +248,14 @@ to optimal). The demo reports the full curve so the stationarity is visible.
 
 ## Status
 
-**Phases 0–8 are implemented and verified, plus Phase 9 (relational dataset) and Phase 17 (experiment
-leaderboard)** — `ruff`/`pyright` clean, `pytest` green. The full loop — simulator → reward model →
+**Phases 0–8 are implemented and verified, plus Phase 9 (relational dataset), Phase 17 (experiment
+leaderboard), Phase 18 (drift monitoring + conditional retrain), and Phase 19 (online drift demo +
+email alerting)** — `ruff`/`pyright` clean, `pytest` green. The full loop — simulator → reward model →
 bandit policies → OPE gate → TSP-with-profits router → orchestrator + FastAPI service over an
-append-only SQLite event store, with ethics guardrails — runs offline and end-to-end. `make demo` runs
-it for one shift and writes `artifacts/demo_report.json`. The relational dataset mirrors the flat one
+append-only SQLite event store, with ethics guardrails — runs offline and end-to-end. Drift monitoring
+scores append-only logs and retrains only when triggered; optional Grafana/Prometheus visualize the
+same signals. See [docs/24-monitoring-operator-guide.md](docs/24-monitoring-operator-guide.md) for
+day-to-day ops. `make demo` runs one shift and writes `artifacts/demo_report.json`. The relational dataset mirrors the flat one
 behind `dataset_mode` (additive sidecars, unchanged `BanditEvent` contract); the experiment leaderboard
 grades any flag config against the `baseline` into an append-only `artifacts/leaderboard.jsonl`. Each
 phase has a mirroring **parametrized** notebook in [notebooks/](notebooks) (a `DATASET_MODE` toggle

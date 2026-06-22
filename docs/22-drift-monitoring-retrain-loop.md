@@ -124,8 +124,12 @@ today.
 | `use_monitoring_dashboard` | Start optional Grafana + Prometheus via Docker Compose (dev/demo) |
 | `metrics_exporter_enabled` | Expose Prometheus `/metrics` from drift JSONL + event-store rollups |
 | `metrics_exporter_port` | HTTP port for the exporter (default `9091`) |
+| `alert_email_enabled` | Send debounced email on significant drift (Phase 19; off by default) |
+| `alert_*` | SMTP host/port/user/password, from/to, debounce, min triggered signals |
 
-Full table in [phase-18 plan § Feature flags](../plans/phase-18-drift-monitoring-retrain-loop.md).
+Full tables in [phase-18 plan § Feature flags](../plans/phase-18-drift-monitoring-retrain-loop.md) and
+[phase-19 plan](../plans/phase-19-online-drift-demo.md). **Day-to-day usage:**
+[24-monitoring-operator-guide.md](24-monitoring-operator-guide.md).
 
 ## 7. Leaderboard entries
 
@@ -180,16 +184,40 @@ text.
 
 ### Local quickstart
 
+**Operator guide (recommended):** [24-monitoring-operator-guide.md](24-monitoring-operator-guide.md)
+
+#### Batch demo (fast)
+
 ```bash
 # 1. Run a drift demo so artifacts exist
-uv run python scripts/simulate_drift_demo.py --n-pre 5000 --n-post 3000 --shifts 4 --seed 7
+make drift-demo
 
-# 2. Exporter (host)
-NBA_METRICS_EXPORTER_ENABLED=1 uv run python scripts/run_metrics_exporter.py --port 9091
+# 2. Exporter over the demo tree (host)
+make metrics-exporter-demo
 
 # 3. Grafana + Prometheus (Docker)
-./scripts/monitoring_stack.sh up
+make monitoring-up
 # Open http://localhost:3000 → "NBA Ops" dashboard (provisioned)
+```
+
+#### Online demo (live Grafana animation)
+
+Three terminals:
+
+```bash
+make online-drift-demo          # T1: stream + monitor + email dry-run
+make metrics-exporter-demo      # T2: metrics over artifacts/drift_demo/*
+make monitoring-up              # T3: Grafana → http://localhost:3000
+```
+
+See [23-online-drift-demo.md](23-online-drift-demo.md) for CLI knobs.
+
+#### Production paths
+
+```bash
+NBA_USE_DRIFT_MONITORING=1 uv run python scripts/run_monitor.py --db artifacts/events.db
+NBA_USE_DRIFT_MONITORING=1 uv run python scripts/run_retrain_loop.py --db artifacts/events.db
+NBA_METRICS_EXPORTER_ENABLED=1 uv run python scripts/run_metrics_exporter.py
 ```
 
 During the demo, watch calibration MAE and reward PSI cross their threshold lines as the frozen model
@@ -197,9 +225,15 @@ serves into the post-drift world, then see the retrain annotation when `run_retr
 
 ### Alerting
 
-Ship one Grafana alert rule group (**paused by default**): any primary drift signal above threshold
-for two consecutive scrapes. Overlap failures are **warnings** (block promote, don't trigger retrain).
-Wire Slack/email via Grafana contact points locally; no webhooks committed to the repo.
+**Email (Phase 19):** `run_retrain_loop.py` and the online demo call `maybe_alert_drift` when a report
+is significant (`should_retrain` + breached signal count). Enabled with `NBA_ALERT_EMAIL_ENABLED=1`;
+without SMTP creds the formatted alert prints to stdout (dry-run). Debounced via
+`artifacts/monitoring/alert_state.json`. See [operator guide §4](24-monitoring-operator-guide.md).
+
+**Grafana (prototype):** ship one alert rule group (**paused by default**): any primary drift signal
+above threshold for two consecutive scrapes. Overlap failures are **warnings** (block promote, don't
+trigger retrain alone). Wire Slack/email via Grafana contact points locally; no webhooks committed to
+the repo.
 
 ### Without Docker
 
@@ -216,6 +250,8 @@ Wire Slack/email via Grafana contact points locally; no webhooks committed to th
 - `simulate_drift_demo.py` shows fire → retrain → recovery on seeded drift.
 - Prometheus exporter emits valid metrics text from synthetic artifacts (no Docker).
 - Grafana dashboard JSON imports and plots all five drift signals with thresholds.
+- Online demo streams events over wall-clock time; see [doc 23](23-online-drift-demo.md) and
+  [operator guide](24-monitoring-operator-guide.md).
 
 > Back to: [09-build-nba-from-scratch.md §23](09-build-nba-from-scratch.md) (online/continual learning
 > bullet — this phase operationalizes it with drift signals, not blind periodic retrain).
