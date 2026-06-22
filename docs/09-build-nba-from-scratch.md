@@ -851,9 +851,10 @@ of value:
   actual streets, not great-circle approximations.
 - **Drift monitoring + conditional retrain.** Serve a frozen model; score drift on append-only logs
   (reward PSI, calibration, feature shift); retrain and promote **only when signals fire**, through
-  the same DR gate — see [Phase 18](../plans/phase-18-drift-monitoring-retrain-loop.md) and
-  [doc 22](22-drift-monitoring-retrain-loop.md). Demos that retrain every run are teaching sandboxes,
-  not production ops.
+  the same DR gate — see [Phase 18](../plans/phase-18-drift-monitoring-retrain-loop.md),
+  [doc 22](22-drift-monitoring-retrain-loop.md), and the [monitoring operator guide](24-monitoring-operator-guide.md).
+  Phase 19 adds a **live-streaming demo** (`make online-drift-demo`) and **email alerts** on significant
+  drift. Demos that retrain every run are teaching sandboxes, not production ops.
 - **Smarter contextual exploration.** Swap the bucketed UCB for **LinUCB** or a neural bandit; add
   **non-stationarity** handling (discount old data).
 - **Productionizing.** Move the event store to a managed database, add an A/B testing harness to

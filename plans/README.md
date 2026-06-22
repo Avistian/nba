@@ -28,7 +28,7 @@ phase can be implemented (TDD) without re-deriving design.
 | 16 | [phase-16-decision-focused-rdl.md](phase-16-decision-focused-rdl.md) | 12, 14 | Decision-focused RDL fusion (deferred) |
 | 17 | [phase-17-experiment-leaderboard.md](phase-17-experiment-leaderboard.md) | 9, 5, 8 (after Phase 9, before upgrades) | Append-only leaderboard: lift/regression per experiment |
 | 18 | [phase-18-drift-monitoring-retrain-loop.md](phase-18-drift-monitoring-retrain-loop.md) | 3, 5, 7, 8, 17 (after Phase 17, before/up parallel with upgrades) | Drift signals, monitor, conditional retrain + DR gate, drift sim demo, **Grafana ops dashboard** |
-| 19 | [phase-19-online-drift-demo.md](phase-19-online-drift-demo.md) | 18 (after Phase 18) | **Live-streaming** drift demo, email alert on significant drift, Grafana animation |
+| 19 | [phase-19-online-drift-demo.md](phase-19-online-drift-demo.md) | 18 (after Phase 18) | **Live-streaming** drift demo, email alert on significant drift, Grafana animation, **operator guide** |
 
 Phases 9–16 are the improvement roadmap from [../docs/11](../docs/11-improving-nba-spatio-relational-optimization.md)
 and [../docs/12](../docs/12-relational-deep-learning-mixin.md): each is **feature-flagged, off by
@@ -37,7 +37,9 @@ that mirrors the flat one. Phase 17 is the **evaluation harness** that grades ev
 **lift, regression, or neutral** on an append-only leaderboard — built **right after Phase 9** (so it
 can grade on both datasets) and **before the upgrades**, each of which must be tested and prove its
 value here (a regression blocks adoption). Phase 18 closes the **operational ML loop** (monitor drift,
-retrain only when triggered, promote through the same DR gate, **visualize in Grafana**). Build order: **9 → 17 → 18 → 10–16**.
+retrain only when triggered, promote through the same DR gate, **visualize in Grafana**). Phase 19 adds
+the **live-streaming demo**, email alerts, and the [monitoring operator guide](../docs/24-monitoring-operator-guide.md).
+Build order: **9 → 17 → 18 → 19 → 10–16**.
 
 ## Architecture through-line
 

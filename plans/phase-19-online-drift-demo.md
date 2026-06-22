@@ -3,7 +3,8 @@
 **Depends on:** Phase 18 (drift monitoring, retrain loop, Grafana stack, batch drift demo).
 **Built after Phase 18** — it turns the batch narrative into a **wall-clock live stream** so operators
 can watch drift signals climb, cross thresholds, receive an email alert, trigger a gated retrain, and
-see recovery on a live Grafana dashboard.
+see recovery on a live Grafana dashboard. **Day-to-day usage:**
+[docs/24-monitoring-operator-guide.md](../docs/24-monitoring-operator-guide.md).
 
 > **Not a new detector.** Drift is still scored by Phase 18 signals/triggers. Phase 19 adds a
 > **producer** that streams events into the EventStore over time, **email notification** on
@@ -107,9 +108,11 @@ Pure seams (unit-tested):
 
 ## Acceptance
 
-- [ ] `NBA_USE_DRIFT_MONITORING=0` → producer is a clean no-op exit 0.
-- [ ] Each tick appends one `DriftReport`; Grafana panels advance per scrape.
-- [ ] Significant drift sends one debounced email alert; retrain promotes through DR gate.
-- [ ] `alert_email_enabled=False` (default) → no email; enabled-without-creds → dry-run print.
-- [ ] Batch demo behavior unchanged after helper extraction.
-- [ ] `ruff` / `pyright` clean; `pytest` green.
+- [x] `NBA_USE_DRIFT_MONITORING=0` → producer is a clean no-op exit 0.
+- [x] Each tick appends one `DriftReport`; Grafana panels advance per scrape.
+- [x] Significant drift sends one debounced email alert; retrain promotes through DR gate.
+- [x] `alert_email_enabled=False` (default) → no email; enabled-without-creds → dry-run print.
+- [x] Batch demo behavior unchanged after helper extraction.
+- [x] `ruff` / `pyright` clean; `pytest` green.
+
+**Operator guide:** [docs/24-monitoring-operator-guide.md](../docs/24-monitoring-operator-guide.md)
