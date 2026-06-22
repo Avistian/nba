@@ -32,3 +32,11 @@ Copying paper defaults without rescaling breaks UCB.
 Same isolation as reward/bandits — only CARP tuples.
 
 *Confirmed: `test_no_oracle_leak` on `ope/` package.*
+
+## R6: Promotion gate batches must be disjoint from candidate fit rows
+
+Do not evaluate a candidate policy with OPE/DR on rows used to fit that candidate's reward model.
+For retraining, fit on reference plus an older recent train split, then gate on the newest held-out
+recent rows.
+
+*Confirmed: retrain loop regression for in-sample DR inflation, 2026-06-22.*

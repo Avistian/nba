@@ -6,10 +6,10 @@ Pipeline (Phase 18 plan):
 2. :func:`~nba.monitoring.signals.build_drift_report` scores the five signals.
 3. :func:`~nba.monitoring.triggers.evaluate_triggers` decides whether to retrain.
 4. If not triggered → append drift report + audit HOLD; return.
-5. Fit candidate :class:`~nba.reward.model.RewardModel` on reference∪recent (with
-   optional time-decay sample weights).
+5. Fit candidate :class:`~nba.reward.model.RewardModel` on reference plus the
+   train portion of recent events (with optional time-decay sample weights).
 6. :class:`~nba.ope.gate.PromotionGate` evaluates the candidate vs the deployed
-   baseline on a recent holdout.
+   baseline on the held-out tail of the recent window.
 7. If promote → write candidate dir under ``artifacts/models/candidates/<ts>/``;
    atomic-rename ``deployed.json``.
 8. Append the audit row (promote|hold) + the drift report.
@@ -97,6 +97,16 @@ def _split_windows(
     )
     recent = labeled[-recent_n:]
     return reference, recent
+
+
+def _split_recent_for_training_and_gate(
+    recent_events: list[BanditEvent],
+) -> tuple[list[BanditEvent], list[BanditEvent]]:
+    """Use older recent rows for adaptation and the newest rows as the gate holdout."""
+    if not recent_events:
+        raise ValueError("cannot split empty recent events")
+    gate_n = max(1, len(recent_events) // 2)
+    return recent_events[:-gate_n], recent_events[-gate_n:]
 
 
 def _time_decay_weights(
@@ -321,22 +331,25 @@ class RetrainLoop:
             outcome = _with_audit(outcome, audit)
             return outcome
 
-        # Retrain: fit candidate on reference∪recent, weighted if configured.
-        train_events = list(reference_events) + list(recent_events)
+        # Retrain: fit on reference plus older recent rows; reserve newest recent rows
+        # as an out-of-sample gate holdout so DR is not inflated by training overlap.
+        train_recent_events, gate_events = _split_recent_for_training_and_gate(recent_events)
+        train_events = list(reference_events) + list(train_recent_events)
+        gate_batch = LoggedBatch.from_events(gate_events)
         weights = _time_decay_weights(train_events, settings=settings, now=now)
         candidate = _fit_candidate(train_events, settings=settings, weights=weights)
         candidate_policy = _candidate_policy(
             candidate, deployed_policy=deployed_policy, settings=settings
         )
 
-        # Gate on the recent holdout.
-        q_hat_candidate = q_matrix(candidate, recent_batch.contexts)
+        # Gate on the held-out tail of the recent window.
+        q_hat_candidate = q_matrix(candidate, gate_batch.contexts)
         baseline_value = (
-            deployed_dr if deployed_dr is not None else float(recent_batch.rewards.mean())
+            deployed_dr if deployed_dr is not None else float(gate_batch.rewards.mean())
         )
         gate_decision = self._gate.evaluate(
             candidate_policy,
-            recent_batch,
+            gate_batch,
             q_hat_candidate,
             baseline_value=baseline_value,
             rng=np.random.default_rng(settings.seed),

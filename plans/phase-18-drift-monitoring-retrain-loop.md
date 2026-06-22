@@ -34,10 +34,10 @@ Retraining blindly every day wastes compute and risks promoting noise. The corre
    on a **reference window** (data at last promotion) vs a **recent window** (last M events).
 3. **Trigger** — if any primary signal breaches its threshold *or* a scheduled ceiling fires
    (`retrain_max_age_days` with enough new data), enqueue a retrain.
-4. **Retrain candidate** — `RewardModel.fit` on reference∪recent (optional time-decay weights);
-   refresh bootstrap ensemble if Thompson is deployed.
-5. **Gate** — OPE/DR on held-out recent logs; promote iff DR lower bound clears deployed baseline +
-   `min_lift` (reuse `PromotionGate`).
+4. **Retrain candidate** — `RewardModel.fit` on reference plus the older portion of the recent
+   window (optional time-decay weights); refresh bootstrap ensemble if Thompson is deployed.
+5. **Gate** — OPE/DR on the newest held-out recent logs excluded from candidate fitting; promote
+   iff DR lower bound clears deployed baseline + `min_lift` (reuse `PromotionGate`).
 6. **Audit** — append-only `retrain_audit.jsonl` records trigger reasons, metrics, gate verdict;
    never overwrite deployed artifacts in place (write candidate dir, atomic swap on promote).
 

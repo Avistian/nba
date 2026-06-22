@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -21,10 +22,13 @@ import pytest
 from nba.bandits.epsilon_greedy import EpsilonGreedy
 from nba.config import Settings
 from nba.data.simulator import generate_logs
+from nba.monitoring import retrain as retrain_module
 from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed
 from nba.monitoring.store_reader import read_deployed_manifest, read_retrain_audit
-from nba.ope.gate import PromotionGate
+from nba.ope.estimators import LoggedBatch, OPEResult
+from nba.ope.gate import GateDecision, PromotionGate
 from nba.reward.model import RewardModel
+from nba.schema import ACTIONS
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -236,6 +240,82 @@ def test_hold_when_gate_fails(tmp_path: Path) -> None:
     # Audit row is a hold.
     audit = read_retrain_audit(settings.retrain_audit_path)
     assert audit[-1].verdict == "hold"
+
+
+def test_gate_uses_recent_holdout_not_candidate_training_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Triggered retrains must gate on rows the candidate did not train on."""
+    settings = _settings(tmp_path).model_copy(
+        update={
+            "drift_reward_psi_threshold": 0.0,
+            "drift_calibration_delta_threshold": -1.0,
+        }
+    )
+    events, deployed, policy, baseline_dr = _bootstrap(tmp_path, settings)
+    _reference_events, recent_events = retrain_module._split_windows(events, settings=settings)
+    recent_context_ids = {id(e.context) for e in recent_events}
+    train_context_ids: set[int] = set()
+    gate_context_ids: set[int] = set()
+
+    class _Candidate:
+        pass
+
+    class _CapturingGate(PromotionGate):
+        def __init__(self) -> None:
+            pass
+
+        def evaluate(
+            self,
+            candidate: Any,
+            batch: LoggedBatch,
+            q_hat: np.ndarray,
+            *,
+            baseline_value: float,
+            clip: float | None = None,
+            rng: np.random.Generator | None = None,
+        ) -> GateDecision:
+            del candidate, q_hat, clip, rng
+            metric = OPEResult("dr", baseline_value - 1.0, 0.0, len(batch))
+            return GateDecision(
+                promote=False,
+                candidate={"dr": metric, "ips": metric, "dm": metric, "snips": metric},
+                baseline_value=baseline_value,
+                lift=-1.0,
+                lower_bound=metric.value,
+                reason="HOLD: captured gate batch",
+            )
+
+    def _capture_fit_candidate(
+        train_events: list[Any],
+        *,
+        settings: Settings,
+        weights: np.ndarray | None,
+    ) -> _Candidate:
+        del settings, weights
+        train_context_ids.update(id(e.context) for e in train_events)
+        return _Candidate()
+
+    def _capture_q_matrix(candidate: _Candidate, contexts: list[Any]) -> np.ndarray:
+        del candidate
+        gate_context_ids.update(id(ctx) for ctx in contexts)
+        return np.zeros((len(contexts), len(ACTIONS)), dtype=np.float64)
+
+    monkeypatch.setattr(retrain_module, "_fit_candidate", _capture_fit_candidate)
+    monkeypatch.setattr(retrain_module, "q_matrix", _capture_q_matrix)
+
+    loop = RetrainLoop(settings=settings, gate=_CapturingGate())
+    outcome = loop.run(
+        deployed_model=deployed,
+        deployed_policy=policy,
+        events=events,
+        deployed_dr=baseline_dr,
+    )
+
+    assert outcome.trigger.should_retrain
+    assert gate_context_ids
+    assert gate_context_ids.issubset(recent_context_ids)
+    assert train_context_ids.isdisjoint(gate_context_ids)
 
 
 def test_drift_report_jsonl_appended(tmp_path: Path) -> None:
