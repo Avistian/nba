@@ -37,6 +37,6 @@ Same isolation as reward/bandits — only CARP tuples.
 
 Do not evaluate a candidate policy with OPE/DR on rows used to fit that candidate's reward model.
 For retraining, fit on reference plus an older recent train split, then gate on the newest held-out
-recent rows.
+recent rows. The same holdout split applies when bootstrapping the initial ``deployed.json``.
 
 *Confirmed: retrain loop regression for in-sample DR inflation, 2026-06-22.*

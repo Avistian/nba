@@ -174,23 +174,51 @@ def test_bootstrap_deployed_creates_manifest(tmp_path: Path) -> None:
 
 
 def test_bootstrap_deployed_dr_value_is_ope_dr_not_mean_reward(tmp_path: Path) -> None:
-    """deployed.json dr_value must match rolling_dr_drop's DR metric, not mean reward."""
+    """deployed.json dr_value must be off-policy DR on held-out rows, not mean reward."""
     settings = _settings(tmp_path)
     events = generate_logs(2000, settings=settings, seed=11)
     model, policy, manifest, deployed_dr = bootstrap_deployed(settings=settings, events=events)
 
-    labeled = [e for e in events if e.reward is not None]
-    ref_events = labeled[-settings.monitor_reference_window :]
-    ref_batch = LoggedBatch.from_events(ref_events)
-    q_hat = q_matrix(model, ref_batch.contexts)
-    pi_e = eval_action_matrix(policy, ref_batch.contexts)
-    expected_dr = float(dr(ref_batch, q_hat, pi_e).value)
+    _reference_events, recent_events = retrain_module._split_windows(events, settings=settings)
+    _train_recent_events, gate_events = retrain_module._split_recent_for_training_and_gate(
+        recent_events
+    )
+    gate_batch = LoggedBatch.from_events(gate_events)
+    q_hat = q_matrix(model, gate_batch.contexts)
+    pi_e = eval_action_matrix(policy, gate_batch.contexts)
+    expected_dr = float(dr(gate_batch, q_hat, pi_e).value)
 
     assert manifest.dr_value == pytest.approx(expected_dr)
     assert deployed_dr == pytest.approx(expected_dr)
-    sig = rolling_dr_drop(model, policy, ref_batch, deployed_dr=manifest.dr_value, settings=settings)
-    assert sig.value == pytest.approx(0.0, abs=1e-9)
-    assert not sig.triggered
+    mean_reward = float(np.mean([e.reward for e in gate_events if e.reward is not None]))
+    assert manifest.dr_value != pytest.approx(mean_reward)
+
+
+def test_bootstrap_deployed_dr_uses_holdout_not_training_rows(tmp_path: Path) -> None:
+    """Initial deployed.json must not score DR on rows used to fit the reward model."""
+    settings = _settings(tmp_path)
+    events = generate_logs(2000, settings=settings, seed=11)
+    reference_events, recent_events = retrain_module._split_windows(events, settings=settings)
+    train_recent_events, gate_events = retrain_module._split_recent_for_training_and_gate(
+        recent_events
+    )
+    train_events = list(reference_events) + list(train_recent_events)
+    train_context_ids = {id(e.context) for e in train_events}
+    gate_context_ids = {id(e.context) for e in gate_events}
+
+    model, policy, manifest, deployed_dr = bootstrap_deployed(settings=settings, events=events)
+
+    assert train_context_ids.isdisjoint(gate_context_ids)
+    gate_batch = LoggedBatch.from_events(gate_events)
+    expected_dr = float(
+        dr(
+            gate_batch,
+            q_matrix(model, gate_batch.contexts),
+            eval_action_matrix(policy, gate_batch.contexts),
+        ).value
+    )
+    assert manifest.dr_value == pytest.approx(expected_dr)
+    assert deployed_dr == pytest.approx(expected_dr)
 
 
 def test_promote_when_gate_passes(tmp_path: Path) -> None:

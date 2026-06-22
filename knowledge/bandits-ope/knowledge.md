@@ -45,6 +45,9 @@ estimate beats baseline but lower bound does not.
 `deployed.json` `dr_value` must be the off-policy DR estimate of the deployed policy (same
 `dr()` path as `rolling_dr_drop`). Bootstrapping with on-policy mean realized reward mixed
 metric types and produced spurious `rolling_dr_drop` signals until the first gate promotion.
+Initial bootstrap must also hold out the DR evaluation rows from reward-model fitting (same
+reference/recent gate split as promotion); scoring DR on in-sample reference rows inflated
+the baseline until the first promotion refreshed it.
 
 `deployed.json` `promoted_at` may be timezone-naive (legacy manifests). Normalize via
 `store_reader.as_utc` before subtracting from aware `now` — otherwise `days_since_promote` and

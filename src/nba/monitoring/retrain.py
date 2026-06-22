@@ -224,21 +224,27 @@ def _bootstrap_deployed(
     """When no ``deployed.json`` exists, fit a baseline model and write the manifest.
 
     Returns (model, policy, manifest, deployed_dr). ``deployed_dr`` is the off-policy
-    DR estimate of the bootstrapped policy on the reference slice — the same metric
+    DR estimate of the bootstrapped policy on a held-out slice — the same metric
     :func:`~nba.monitoring.signals.rolling_dr_drop` compares against on the recent window.
+
+    The reward model is fit on reference plus an older portion of the recent window;
+    DR is estimated on the newest held-out recent rows so ``q_hat`` is not inflated
+    by training overlap (same split as the retrain promotion gate).
     """
     labeled = _labeled(events)
     if not labeled:
         raise ValueError("cannot bootstrap deployed model from empty logs")
-    model = RewardModel.fit(labeled, settings=settings)
+    reference_events, recent_events = _split_windows(events, settings=settings)
+    train_recent_events, gate_events = _split_recent_for_training_and_gate(recent_events)
+    train_events = list(reference_events) + list(train_recent_events)
+    model = RewardModel.fit(train_events, settings=settings)
     policy = EpsilonGreedy(
         model, epsilon=settings.epsilon, rng=np.random.default_rng(settings.seed)
     )
-    ref_events = labeled[-settings.monitor_reference_window :]
-    ref_batch = LoggedBatch.from_events(ref_events)
-    q_hat = q_matrix(model, ref_batch.contexts)
-    pi_e = eval_action_matrix(policy, ref_batch.contexts)
-    dr_result = dr(ref_batch, q_hat, pi_e)
+    gate_batch = LoggedBatch.from_events(gate_events)
+    q_hat = q_matrix(model, gate_batch.contexts)
+    pi_e = eval_action_matrix(policy, gate_batch.contexts)
+    dr_result = dr(gate_batch, q_hat, pi_e)
     deployed_dr = float(dr_result.value)
     deployed_dr_lb = float(dr_result.value - settings.ope_z * dr_result.std_err)
     _write_deployed_manifest(
