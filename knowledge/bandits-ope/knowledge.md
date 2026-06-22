@@ -53,6 +53,11 @@ the baseline until the first promotion refreshed it.
 `store_reader.as_utc` before subtracting from aware `now` — otherwise `days_since_promote` and
 `nba_deployed_model_age_days` raise `TypeError` and halt scheduled retrain evaluation.
 
+The drift **reference** slice must also filter to labeled events strictly after `promoted_at`
+(`_split_windows` in `retrain.py`). Pre-promotion rows in the reference window skew PSI,
+calibration deltas, and retrain train splits while scheduled triggers already count only
+post-promote events via `count_labeled_since`.
+
 ## Phase 18 monitor cadence
 
 `monitor_interval_events` gates `run_monitor.py` / `run_retrain_loop.py`: count labeled rows
