@@ -184,6 +184,11 @@ def _load_promoted_stack(
     return deployed_model, deployed_policy, baseline_dr
 
 
+def _signals_from_report(report) -> tuple[dict[str, float], bool]:
+    """Extract shift-record signal values from a scored DriftReport."""
+    return {s.name: s.value for s in report.signals}, report.overlap_ok
+
+
 def _score_drift(
     *,
     model,
@@ -210,7 +215,7 @@ def _score_drift(
         settings=settings,
     )
     append_report(report, settings.monitoring_report_path)
-    return {s.name: s.value for s in report.signals}, report.overlap_ok
+    return _signals_from_report(report)
 
 
 def _persist_events(settings: Settings, events: list) -> int:
@@ -278,8 +283,12 @@ def run_drift_demo(
     for k in range(shifts):
         shift_events = post_shifts[k]
         events_cumulative = list(pre_events) + [e for s in post_shifts[: k + 1] for e in s]
+        calib = _calib_mae(deployed_model, shift_events)
+        regret = _mean_regret(shift_events, oracle)
+        mean_reward = float(np.mean([e.reward for e in shift_events if e.reward is not None]))
 
-        # Conditional retrain: RetrainLoop evaluates drift triggers each shift.
+        # Conditional retrain: RetrainLoop is the sole JSONL writer per frozen shift
+        # (matches one production monitor pass).
         if not report.promoted:
             outcome = loop.run(
                 deployed_model=deployed_model,
@@ -289,8 +298,7 @@ def run_drift_demo(
             )
             drift_report = outcome.report
             if drift_report is not None:
-                signals = {s.name: s.value for s in drift_report.signals}
-                overlap_ok = drift_report.overlap_ok
+                signals, overlap_ok = _signals_from_report(drift_report)
             else:
                 manifest = read_deployed_manifest(settings.deployed_model_manifest)
                 promoted_at = manifest.promoted_at if manifest else None
@@ -321,9 +329,6 @@ def run_drift_demo(
                 promoted_at=promoted_at,
             )
 
-        calib = _calib_mae(deployed_model, shift_events)
-        regret = _mean_regret(shift_events, oracle)
-        mean_reward = float(np.mean([e.reward for e in shift_events if e.reward is not None]))
         report.shift_records.append(
             ShiftRecord(
                 shift_index=k,

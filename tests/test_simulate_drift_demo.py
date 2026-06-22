@@ -203,6 +203,34 @@ def test_persist_events_resets_only_demo_db(
         store.close()
 
 
+def test_frozen_shifts_append_one_drift_report_per_shift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each frozen shift must write exactly one drift report (RetrainLoop, not _score_drift too)."""
+    import simulate_drift_demo as mod
+
+    demo_drift = tmp_path / "drift_demo" / "monitoring" / "drift_reports.jsonl"
+    demo_audit = tmp_path / "drift_demo" / "monitoring" / "retrain_audit.jsonl"
+    monkeypatch.setattr(mod, "_DRIFT_DEMO_MONITORING_REPORT", demo_drift)
+    monkeypatch.setattr(mod, "_DRIFT_DEMO_RETRAIN_AUDIT", demo_audit)
+
+    settings = _settings(tmp_path)
+    report = run_drift_demo(
+        n_pre=200,
+        n_post=100,
+        shifts=3,
+        seed=3,
+        settings=settings,
+        report_path=None,
+    )
+
+    frozen_shifts = sum(1 for s in report.shift_records if s.phase == "frozen")
+    post_shifts = sum(1 for s in report.shift_records if s.phase == "post_retrain")
+    n_reports = len(demo_drift.read_text(encoding="utf-8").strip().splitlines())
+    assert frozen_shifts == 3
+    assert n_reports == frozen_shifts + post_shifts
+
+
 def test_retrain_loop_runs_each_frozen_shift_not_only_k_eq_1(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
