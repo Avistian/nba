@@ -664,6 +664,64 @@ def test_scheduled_trigger_uses_events_since_promote_not_recent_window(tmp_path:
     assert "scheduled_max_age" not in outcome.trigger.reasons
 
 
+def test_bootstrap_promoted_at_uses_wall_clock_not_training_data(tmp_path: Path) -> None:
+    """Bootstrap on historical logs must not inherit training-data age for scheduled retrain."""
+    settings = _settings(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "retrain_max_age_days": 1,
+            "retrain_min_new_events": 50,
+            "drift_reward_psi_threshold": 999.0,
+            "drift_calibration_delta_threshold": 999.0,
+            "drift_calibration_absolute_max": 999.0,
+            "drift_feature_psi_threshold": 999.0,
+            "drift_rolling_dr_drop_threshold": 999.0,
+        }
+    )
+    events = generate_logs(2000, settings=settings, seed=11)
+    now = datetime.now(UTC)
+    for i, event in enumerate(events):
+        events[i] = event.model_copy(
+            update={"timestamp": now - timedelta(days=30, hours=i)}
+        )
+
+    model, policy, manifest, deployed_dr = bootstrap_deployed(
+        settings=settings, events=events, now=now
+    )
+
+    assert manifest.promoted_at == now
+    loop = RetrainLoop(settings=settings, gate=PromotionGate(z=1.96, min_lift=5.0))
+    outcome = loop.run(
+        deployed_model=model,
+        deployed_policy=policy,
+        events=events,
+        deployed_dr=deployed_dr,
+        now=now,
+    )
+
+    assert not outcome.trigger.should_retrain
+    assert "scheduled_max_age" not in outcome.trigger.reasons
+
+
+def test_split_windows_allows_historical_log_after_fresh_bootstrap(tmp_path: Path) -> None:
+    """When promoted_at is wall-clock but events are historical, windows still split."""
+    settings = _settings(tmp_path)
+    events = generate_logs(600, settings=settings, seed=1)
+    now = datetime.now(UTC)
+    for i, event in enumerate(events):
+        events[i] = event.model_copy(
+            update={"timestamp": now - timedelta(days=10, hours=i)}
+        )
+
+    reference, recent = retrain_module._split_windows(
+        events, settings=settings, promoted_at=now
+    )
+
+    assert reference
+    assert recent
+    assert len(recent) == settings.monitor_recent_window
+
+
 def test_drift_report_jsonl_appended(tmp_path: Path) -> None:
     """Each run appends one drift report line."""
     settings = _settings(tmp_path)

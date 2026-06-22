@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -102,7 +102,12 @@ def _split_windows(
     pre_recent = labeled[:recent_start]
     if promoted_at is not None:
         cutoff = as_utc(promoted_at)
-        ref_pool = [e for e in pre_recent if as_utc(e.timestamp) > cutoff]
+        latest_labeled = max(as_utc(e.timestamp) for e in labeled)
+        # Fresh bootstrap: wall-clock promoted_at is after every historical event.
+        if cutoff > latest_labeled:
+            ref_pool = pre_recent
+        else:
+            ref_pool = [e for e in pre_recent if as_utc(e.timestamp) > cutoff]
     else:
         ref_pool = pre_recent
     if not ref_pool:
@@ -243,7 +248,10 @@ def _write_deployed_manifest(
 
 
 def _bootstrap_deployed(
-    settings: Settings, *, events: list[BanditEvent]
+    settings: Settings,
+    *,
+    events: list[BanditEvent],
+    now: datetime | None = None,
 ) -> tuple[RewardModel, Policy, DeployedManifest | None, float]:
     """When no ``deployed.json`` exists, fit a baseline model and write the manifest.
 
@@ -271,8 +279,7 @@ def _bootstrap_deployed(
     dr_result = dr(gate_batch, q_hat, pi_e)
     deployed_dr = float(dr_result.value)
     deployed_dr_lb = float(dr_result.value - settings.ope_z * dr_result.std_err)
-    oldest_train_ts = min(as_utc(e.timestamp) for e in train_events)
-    promoted_at = oldest_train_ts - timedelta(seconds=1)
+    promoted_at = as_utc(now or datetime.now(UTC))
     _write_deployed_manifest(
         settings=settings,
         model_dir=settings.model_dir,
@@ -525,13 +532,15 @@ def _with_audit(outcome: RetrainOutcome, audit: AuditRow) -> RetrainOutcome:
 
 
 def bootstrap_deployed(
-    *, settings: Settings, events: list[BanditEvent]
+    *, settings: Settings, events: list[BanditEvent], now: datetime | None = None
 ) -> tuple[RewardModel, Policy, DeployedManifest, float]:
     """Public helper: create the initial ``deployed.json`` from a labeled log.
 
     Used by ``run_retrain_loop.py`` when no manifest exists yet (first-run path).
     """
-    model, policy, manifest, deployed_dr = _bootstrap_deployed(settings, events=events)
+    model, policy, manifest, deployed_dr = _bootstrap_deployed(
+        settings, events=events, now=now
+    )
     assert manifest is not None
     model.save(settings.model_dir)
     return model, policy, manifest, deployed_dr

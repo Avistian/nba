@@ -53,6 +53,12 @@ the baseline until the first promotion refreshed it.
 `store_reader.as_utc` before subtracting from aware `now` — otherwise `days_since_promote` and
 `nba_deployed_model_age_days` raise `TypeError` and halt scheduled retrain evaluation.
 
+Initial `bootstrap_deployed` must stamp `promoted_at` with wall-clock deploy time, not the
+oldest training-row timestamp. Historical EventStore replays otherwise inherit data age into
+`days_since_promote` / `count_labeled_since` and can fire `scheduled_max_age` immediately.
+When `promoted_at` is after every event timestamp, `_split_windows` falls back to the
+unfiltered reference pool so drift scoring still works on the replayed log.
+
 The drift **reference** slice must also filter to labeled events strictly after `promoted_at`
 (`_split_windows` in `retrain.py`). Pre-promotion rows in the reference window skew PSI,
 calibration deltas, and retrain train splits while scheduled triggers already count only
