@@ -58,6 +58,11 @@ The drift **reference** slice must also filter to labeled events strictly after 
 calibration deltas, and retrain train splits while scheduled triggers already count only
 post-promote events via `count_labeled_since`.
 
+The drift **recent** slice must honor `monitor_recent_window` when enough labeled rows exist.
+Do not cap `recent_n` at `len(labeled) // 2` — that shrinks drift, overlap, and gate splits
+whenever total labeled count is below twice the configured window. Reserve at least one row
+for reference via `min(monitor_recent_window, len(labeled) - 1)` instead.
+
 ## Phase 18 monitor cadence
 
 `monitor_interval_events` gates `run_monitor.py` / `run_retrain_loop.py`: count labeled rows
