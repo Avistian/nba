@@ -22,6 +22,7 @@ from nba.api.store import EventStore  # noqa: E402
 from nba.bandits.epsilon_greedy import EpsilonGreedy  # noqa: E402
 from nba.config import Settings  # noqa: E402
 from nba.data.simulator import frame_to_events  # noqa: E402
+from nba.monitoring.cadence import evaluate_monitor_cadence  # noqa: E402
 from nba.monitoring.retrain import bootstrap_deployed  # noqa: E402
 from nba.monitoring.signals import DriftReportContext, build_drift_report  # noqa: E402
 from nba.monitoring.store_reader import read_deployed_manifest  # noqa: E402
@@ -46,6 +47,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Score drift signals on logged events.")
     parser.add_argument("--db", help="path to the EventStore SQLite DB")
     parser.add_argument("--logs", help="path to a parquet log frame")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="run even when fewer than monitor_interval_events labeled rows arrived",
+    )
     args = parser.parse_args()
 
     settings = Settings()
@@ -57,6 +63,15 @@ def main() -> None:
     labeled = [e for e in events if e.reward is not None]
     if len(labeled) < 2:
         print(f"only {len(labeled)} labeled events; need at least 2 to score drift.")
+        return
+
+    cadence = evaluate_monitor_cadence(events, settings=settings)
+    if not args.force and not cadence.due:
+        print(
+            "monitor cadence not met: "
+            f"{cadence.events_since_last_report}/{cadence.interval} labeled events "
+            "since last report; skipping (use --force to override)."
+        )
         return
 
     # Load (or bootstrap) the deployed model + manifest.

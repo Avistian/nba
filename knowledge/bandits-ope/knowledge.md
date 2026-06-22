@@ -52,3 +52,10 @@ the baseline until the first promotion refreshed it.
 `deployed.json` `promoted_at` may be timezone-naive (legacy manifests). Normalize via
 `store_reader.as_utc` before subtracting from aware `now` — otherwise `days_since_promote` and
 `nba_deployed_model_age_days` raise `TypeError` and halt scheduled retrain evaluation.
+
+## Phase 18 monitor cadence
+
+`monitor_interval_events` gates `run_monitor.py` / `run_retrain_loop.py`: count labeled rows
+strictly after the latest `drift_reports.jsonl` timestamp; skip the batch job until the count ≥
+interval (default 500). `evaluate_monitor_cadence` in `monitoring/cadence.py` is the single
+implementation; the Prometheus exporter surfaces `nba_monitor_*` gauges for ops scheduling.

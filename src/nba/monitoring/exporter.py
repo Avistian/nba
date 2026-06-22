@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 from nba.api.store import EventStore
 from nba.config import Settings
+from nba.monitoring.cadence import MonitorCadence, evaluate_monitor_cadence
 from nba.monitoring.signals import DriftReport, DriftSignal
 from nba.monitoring.store_reader import (
     AuditRow,
@@ -43,6 +44,7 @@ class MonitoringSnapshot:
     latest_audit: AuditRow | None
     deployed: DeployedManifest | None
     rollups: EventStoreRollup | None
+    cadence: MonitorCadence | None = None
     verdict_counts: dict[str, int] = field(default_factory=dict)
 
 
@@ -58,6 +60,9 @@ def build_snapshot(
     audit_latest = audit_rows[-1] if audit_rows else None
     deployed = read_deployed_manifest(settings.deployed_model_manifest)
     rollups = event_store_rollups(store, recent_window=settings.monitor_recent_window)
+    cadence: MonitorCadence | None = None
+    if store is not None:
+        cadence = evaluate_monitor_cadence(store.load_events(), settings=settings)
     counts = count_verdicts(audit_rows)
     return MonitoringSnapshot(
         timestamp=now or datetime.now(UTC),
@@ -66,6 +71,7 @@ def build_snapshot(
         latest_audit=audit_latest,
         deployed=deployed,
         rollups=rollups,
+        cadence=cadence,
         verdict_counts=counts,
     )
 
@@ -249,6 +255,30 @@ def _spec_rows(snapshot: MonitoringSnapshot, settings: Settings) -> list[_Metric
                 help="Total retrain audit rows by verdict",
                 value=float(snapshot.verdict_counts.get(verdict, 0)),
                 labels={"verdict": verdict},
+            )
+        )
+
+    # Monitor cadence — configured interval + progress since last DriftReport.
+    specs.append(
+        _MetricSpec(
+            name="nba_monitor_interval_events",
+            help="Configured labeled-event cadence before the monitor batch job runs",
+            value=float(settings.monitor_interval_events),
+        )
+    )
+    if snapshot.cadence is not None:
+        specs.append(
+            _MetricSpec(
+                name="nba_monitor_events_since_last_report",
+                help="Labeled events logged since the latest DriftReport timestamp",
+                value=float(snapshot.cadence.events_since_last_report),
+            )
+        )
+        specs.append(
+            _MetricSpec(
+                name="nba_monitor_due",
+                help="1 when labeled events since last report meet the monitor cadence",
+                value=float(snapshot.cadence.due),
             )
         )
 
