@@ -15,3 +15,4 @@ more than today's task.
 | 2026-06-18 | Feature-flagged improvement roadmap; relational dataset first | [2026-06-18-feature-flagged-relational-upgrades.md](2026-06-18-feature-flagged-relational-upgrades.md) |
 | 2026-06-18 | Relational dataset keeps the BanditEvent contract (sidecars + `household_id`) | [2026-06-18-relational-dataset-contract.md](2026-06-18-relational-dataset-contract.md) |
 | 2026-06-18 | Dataset-aware grading through an oracle facade | [2026-06-18-dataset-aware-grading-oracle.md](2026-06-18-dataset-aware-grading-oracle.md) |
+| 2026-06-22 | Career positioning: niche research bridge-builder, Barista-FIRE-funded, AI director+verifier | [2026-06-22-career-positioning-strategy.md](2026-06-22-career-positioning-strategy.md) |
