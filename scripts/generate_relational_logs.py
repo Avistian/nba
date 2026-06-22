@@ -17,8 +17,9 @@ from pathlib import Path
 import pandas as pd
 
 from nba.config import get_settings
+from nba.data.drift import generate_logs_for_settings
 from nba.data.graph import build_graph, save_graph
-from nba.data.relational_simulator import generate_logs, logs_to_frame
+from nba.data.relational_simulator import logs_to_frame
 
 
 def _households_frame(households: list) -> pd.DataFrame:
@@ -58,7 +59,10 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = get_settings()
-    events, world = generate_logs(args.n, settings=settings, seed=args.seed, temp=args.temp)
+    events, world = generate_logs_for_settings(
+        args.n, settings=settings, seed=args.seed, temp=args.temp
+    )
+    assert world is not None
 
     frame = logs_to_frame(events, world=world)
     graph = build_graph(world)

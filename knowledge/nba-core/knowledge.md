@@ -11,7 +11,12 @@ context x → reward model q(x,a) → bandit policy (explore) → per-door profi
 Every decision logs `(context, action, propensity)`; outcomes append later. Logs feed retraining and
 OPE. **The bandit proposes, the router disposes.**
 
-## Module seams
+## Phase 18 flags
+
+- `use_simulated_drift` gates `DriftSpec` during log generation via
+  `nba.data.drift.resolve_drift_spec` / `generate_logs_for_settings` (grading spec:
+  `GRADING_DRIFT_SPEC`). Scripts and `run_demo` call the helper; explicit `spec=` still
+  overrides for `simulate_drift_demo.py`.
 
 | Seam | Module | Role |
 |------|--------|------|

@@ -15,7 +15,14 @@ import pytest
 from nba.config import Settings
 from nba.data import relational_simulator as rel
 from nba.data import simulator as flat
-from nba.data.drift import DriftSpec, apply_drift_to_latent, generate_logs_with_drift
+from nba.data.drift import (
+    GRADING_DRIFT_SPEC,
+    DriftSpec,
+    apply_drift_to_latent,
+    generate_logs_for_settings,
+    generate_logs_with_drift,
+    resolve_drift_spec,
+)
 from nba.schema import Action, Outcome, ProspectContext
 
 
@@ -131,6 +138,40 @@ def test_relational_with_no_spec_unchanged(tmp_path) -> None:
     for a, b in zip(events_a, events_b, strict=True):
         assert a.action == b.action
         assert a.reward == pytest.approx(b.reward, rel=1e-12)
+
+
+def test_use_simulated_drift_flag_wires_grading_spec(tmp_path) -> None:
+    """``use_simulated_drift`` enables :data:`GRADING_DRIFT_SPEC` without an explicit ``spec=``."""
+    settings_off = Settings(
+        data_dir=tmp_path / "data",
+        model_dir=tmp_path / "models",
+        db_path=tmp_path / "events.db",
+        use_simulated_drift=False,
+    )
+    settings_on = settings_off.model_copy(update={"use_simulated_drift": True})
+    assert resolve_drift_spec(settings_off) is None
+    assert resolve_drift_spec(settings_on) == GRADING_DRIFT_SPEC
+
+    flat_off, _ = generate_logs_for_settings(800, settings=settings_off, seed=7)
+    flat_on, _ = generate_logs_for_settings(800, settings=settings_on, seed=7)
+    mean_off = float(np.mean([e.reward for e in flat_off if e.reward is not None]))
+    mean_on = float(np.mean([e.reward for e in flat_on if e.reward is not None]))
+    assert mean_on != pytest.approx(mean_off, abs=1e-6)
+
+    rel_settings = settings_on.model_copy(
+        update={"dataset_mode": "relational", "n_households": 20, "history_len": 4}
+    )
+    rel_off, _ = generate_logs_for_settings(
+        400,
+        settings=settings_off.model_copy(
+            update={"dataset_mode": "relational", "n_households": 20, "history_len": 4}
+        ),
+        seed=11,
+    )
+    rel_on, _ = generate_logs_for_settings(400, settings=rel_settings, seed=11)
+    rel_mean_off = float(np.mean([e.reward for e in rel_off if e.reward is not None]))
+    rel_mean_on = float(np.mean([e.reward for e in rel_on if e.reward is not None]))
+    assert rel_mean_on != pytest.approx(rel_mean_off, abs=1e-6)
 
 
 def test_drift_does_not_break_skip_door_determinism() -> None:

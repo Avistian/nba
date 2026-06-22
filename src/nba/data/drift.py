@@ -45,6 +45,72 @@ class DriftSpec:
     weather_slam_mult: float = 1.0  # multiply bad-weather slam mass post-drift
 
 
+# Canonical grading/demo world (doc 22 §5). Enabled when ``Settings.use_simulated_drift``.
+GRADING_DRIFT_SPEC = DriftSpec(
+    at_fraction=0.5,
+    reward_scale=1.3,
+    knock_evening_boost=0.15,
+)
+
+
+def resolve_drift_spec(
+    settings: Settings,  # type: ignore[name-defined]  # noqa: F821
+    *,
+    spec: DriftSpec | None = None,
+) -> DriftSpec | None:
+    """Return the drift spec to apply for log generation.
+
+    An explicit ``spec`` wins. Otherwise, when ``settings.use_simulated_drift`` is
+    set, return :data:`GRADING_DRIFT_SPEC`; when off, return ``None`` (stationary).
+    """
+    from nba.config import Settings  # noqa: PLC0415
+
+    assert isinstance(settings, Settings)
+    if spec is not None:
+        return spec
+    if settings.use_simulated_drift:
+        return GRADING_DRIFT_SPEC
+    return None
+
+
+def generate_logs_for_settings(
+    n: int,
+    *,
+    settings: Settings,  # type: ignore[name-defined]  # noqa: F821
+    seed: int,
+    temp: float = 0.5,
+    spec: DriftSpec | None = None,
+) -> tuple[list[BanditEvent], object | None]:
+    """Generate logs respecting ``settings.use_simulated_drift`` and ``dataset_mode``.
+
+    Returns ``(events, world)`` where ``world`` is a relational
+    :class:`~nba.data.relational_simulator.RelationalWorld` in relational mode and
+    ``None`` in flat mode. Callers that pass an explicit ``spec`` bypass the flag
+    (for ``simulate_drift_demo.py`` and tests).
+    """
+    from nba.config import Settings  # noqa: PLC0415
+
+    assert isinstance(settings, Settings)
+    effective = resolve_drift_spec(settings, spec=spec)
+    if settings.dataset_mode == "relational":
+        from nba.data import relational_simulator as rel  # noqa: PLC0415
+
+        events, world = rel.generate_logs(
+            n, settings=settings, seed=seed, temp=temp, spec=effective
+        )
+        return events, world
+    if effective is not None:
+        return (
+            generate_logs_with_drift(
+                n, settings=settings, seed=seed, spec=effective, temp=temp
+            ),
+            None,
+        )
+    from nba.data import simulator as flat  # noqa: PLC0415
+
+    return flat.generate_logs(n, settings=settings, seed=seed, temp=temp), None
+
+
 def _is_active(spec: DriftSpec, event_idx: int, n: int) -> bool:
     """True when ``event_idx/n >= spec.at_fraction``."""
     if n <= 0:

@@ -10,7 +10,8 @@ import argparse
 from pathlib import Path
 
 from nba.config import get_settings
-from nba.data.simulator import generate_logs, logs_to_frame
+from nba.data.drift import generate_logs_for_settings
+from nba.data.simulator import logs_to_frame
 
 
 def main() -> None:
@@ -26,7 +27,9 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = get_settings()
-    events = generate_logs(args.n, settings=settings, seed=args.seed, temp=args.temp)
+    events, _ = generate_logs_for_settings(
+        args.n, settings=settings, seed=args.seed, temp=args.temp
+    )
     frame = logs_to_frame(events)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
