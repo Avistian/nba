@@ -61,6 +61,9 @@ post-promote events via `count_labeled_since`.
 ## Phase 18 monitor cadence
 
 `monitor_interval_events` gates `run_monitor.py` / `run_retrain_loop.py`: count labeled rows
-strictly after the latest `drift_reports.jsonl` timestamp; skip the batch job until the count ≥
-interval (default 500). `evaluate_monitor_cadence` in `monitoring/cadence.py` is the single
-implementation; the Prometheus exporter surfaces `nba_monitor_*` gauges for ops scheduling.
+since the latest `drift_reports.jsonl` entry. When the report stores `n_labeled_total`, cadence
+uses log growth (`current_total - n_labeled_total`); if that baseline exceeds the current log
+(store reset, different DB, trimmed logs), fall back to timestamp-based counting. Skip the batch
+job until the count ≥ interval (default 500). `evaluate_monitor_cadence` in `monitoring/cadence.py`
+is the single implementation; the Prometheus exporter surfaces `nba_monitor_*` gauges for ops
+scheduling.

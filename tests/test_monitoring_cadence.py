@@ -94,6 +94,24 @@ def test_cadence_not_due_when_few_events_since_last_report(tmp_path: Path) -> No
     assert cadence.due is False
 
 
+def test_cadence_falls_back_when_stored_total_exceeds_current_log(tmp_path: Path) -> None:
+    """When ``n_labeled_total`` exceeds the current log, fall back to timestamp counting."""
+    settings = _settings(tmp_path, interval=500)
+    events = _stamp_monotonic(generate_logs(600, settings=settings, seed=9))
+    report_at = events[0].timestamp - timedelta(minutes=1)
+    settings.monitoring_report_path.parent.mkdir(parents=True, exist_ok=True)
+    append_report(
+        _drift_report(at=report_at, n_labeled_total=1200),
+        settings.monitoring_report_path,
+    )
+
+    assert count_new_labeled_since_last_monitor(events, settings=settings) == 600
+
+    cadence = evaluate_monitor_cadence(events, settings=settings)
+    assert cadence.events_since_last_report == 600
+    assert cadence.due is True
+
+
 def test_cadence_uses_n_labeled_total_when_present(tmp_path: Path) -> None:
     """When the last report stores ``n_labeled_total``, cadence uses log growth not timestamps."""
     settings = _settings(tmp_path, interval=500)

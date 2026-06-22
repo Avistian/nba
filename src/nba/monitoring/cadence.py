@@ -42,8 +42,8 @@ def count_new_labeled_since_last_monitor(
     latest = latest_drift_report(settings.monitoring_report_path)
     if latest is None:
         return total
-    if latest.n_labeled_total is not None:
-        return max(0, total - latest.n_labeled_total)
+    if latest.n_labeled_total is not None and total >= latest.n_labeled_total:
+        return total - latest.n_labeled_total
     return count_labeled_since(events, latest.timestamp)
 
 
