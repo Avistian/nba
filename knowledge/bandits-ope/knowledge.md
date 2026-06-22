@@ -39,3 +39,9 @@ estimate beats baseline but lower bound does not.
 - Thompson often wins DR selection; ε-greedy competitive.
 - Gate promotion is marginal at moderate N — HOLD is normal and correct.
 - Default UCB knobs (`ucb_c=1.0`, `temp=0.25`) flatten toward uniform when q-gaps are O(0.1).
+
+## Phase 18 monitoring metric consistency
+
+`deployed.json` `dr_value` must be the off-policy DR estimate of the deployed policy (same
+`dr()` path as `rolling_dr_drop`). Bootstrapping with on-policy mean realized reward mixed
+metric types and produced spurious `rolling_dr_drop` signals until the first gate promotion.
