@@ -58,6 +58,10 @@ The drift **reference** slice must also filter to labeled events strictly after 
 calibration deltas, and retrain train splits while scheduled triggers already count only
 post-promote events via `count_labeled_since`.
 
+When all post-promotion events fall inside the recent tail (right after promotion),
+`_split_windows` splits the post-promotion pool into older reference and newer recent
+slices instead of raising `ValueError`.
+
 The drift **recent** slice must honor `monitor_recent_window` when enough labeled rows exist.
 Do not cap `recent_n` at `len(labeled) // 2` — that shrinks drift, overlap, and gate splits
 whenever total labeled count is below twice the configured window. Reserve at least one row
