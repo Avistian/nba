@@ -45,3 +45,7 @@ estimate beats baseline but lower bound does not.
 `deployed.json` `dr_value` must be the off-policy DR estimate of the deployed policy (same
 `dr()` path as `rolling_dr_drop`). Bootstrapping with on-policy mean realized reward mixed
 metric types and produced spurious `rolling_dr_drop` signals until the first gate promotion.
+
+`deployed.json` `promoted_at` may be timezone-naive (legacy manifests). Normalize via
+`store_reader.as_utc` before subtracting from aware `now` — otherwise `days_since_promote` and
+`nba_deployed_model_age_days` raise `TypeError` and halt scheduled retrain evaluation.

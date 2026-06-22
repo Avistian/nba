@@ -25,6 +25,7 @@ from nba.monitoring.store_reader import (
     AuditRow,
     DeployedManifest,
     EventStoreRollup,
+    as_utc,
     count_verdicts,
     event_store_rollups,
     latest_drift_report,
@@ -202,7 +203,7 @@ def _spec_rows(snapshot: MonitoringSnapshot, settings: Settings) -> list[_Metric
                 value=float(deployed.dr_lower_bound),
             )
         )
-        age_days = (snapshot.timestamp - deployed.promoted_at).total_seconds() / 86400.0
+        age_days = (snapshot.timestamp - as_utc(deployed.promoted_at)).total_seconds() / 86400.0
         specs.append(
             _MetricSpec(
                 name="nba_deployed_model_age_days",

@@ -12,11 +12,18 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from nba.api.store import EventStore
 from nba.monitoring.signals import DriftReport
+
+
+def as_utc(dt: datetime) -> datetime:
+    """Normalize a timestamp for comparison (naive datetimes are treated as UTC)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 @dataclass(frozen=True)
@@ -76,7 +83,7 @@ class DeployedManifest:
         """Reconstruct a manifest from a parsed ``deployed.json`` mapping."""
         return cls(
             model_dir=str(data["model_dir"]),
-            promoted_at=datetime.fromisoformat(str(data["promoted_at"])),
+            promoted_at=as_utc(datetime.fromisoformat(str(data["promoted_at"]))),
             dr_value=float(data["dr_value"]),  # type: ignore[arg-type]
             dr_lower_bound=float(data["dr_lower_bound"]),  # type: ignore[arg-type]
             baseline_value=float(data["baseline_value"]),  # type: ignore[arg-type]

@@ -356,6 +356,38 @@ def test_gate_uses_recent_holdout_not_candidate_training_rows(
     assert train_context_ids.isdisjoint(gate_context_ids)
 
 
+def test_naive_promoted_at_does_not_break_days_since_promote(tmp_path: Path) -> None:
+    """Naive promoted_at in deployed.json must not TypeError against aware ``now``."""
+    settings = _settings(tmp_path)
+    events, deployed, policy, baseline_dr = _bootstrap(tmp_path, settings)
+
+    naive_promoted = (datetime.now(UTC) - timedelta(days=10)).replace(tzinfo=None)
+    settings.deployed_model_manifest.write_text(
+        json.dumps(
+            {
+                "model_dir": str(settings.model_dir),
+                "promoted_at": naive_promoted.isoformat(),
+                "dr_value": baseline_dr,
+                "dr_lower_bound": baseline_dr,
+                "baseline_value": baseline_dr,
+                "feature_names": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loop = RetrainLoop(settings=settings, gate=PromotionGate(z=1.96, min_lift=5.0))
+    outcome = loop.run(
+        deployed_model=deployed,
+        deployed_policy=policy,
+        events=events,
+        deployed_dr=baseline_dr,
+        now=datetime.now(UTC),
+    )
+
+    assert outcome.report is not None
+
+
 def test_scheduled_trigger_uses_events_since_promote_not_recent_window(tmp_path: Path) -> None:
     """Scheduled retrain must count labeled events since promote, not the capped recent window."""
     settings = _settings(tmp_path)

@@ -123,6 +123,29 @@ def test_retrain_audit_counter_by_verdict(tmp_path: Path) -> None:
     assert 'nba_retrain_total{verdict="hold"} 0.0' in text
 
 
+def test_naive_promoted_at_deployed_age_metric(tmp_path: Path) -> None:
+    """Naive promoted_at in deployed.json must not TypeError against aware snapshot timestamp."""
+    settings = _settings(tmp_path)
+    settings.deployed_model_manifest.parent.mkdir(parents=True, exist_ok=True)
+    naive_promoted = (datetime.now(UTC) - timedelta(days=5)).replace(tzinfo=None)
+    settings.deployed_model_manifest.write_text(
+        json.dumps(
+            {
+                "model_dir": str(settings.model_dir),
+                "promoted_at": naive_promoted.isoformat(),
+                "dr_value": 0.4,
+                "dr_lower_bound": 0.35,
+                "baseline_value": 0.3,
+                "feature_names": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    snapshot = build_snapshot(settings=settings, store=None, now=datetime.now(UTC))
+    text = render_prometheus_text(snapshot, settings=settings)
+    assert "nba_deployed_model_age_days " in text
+
+
 def test_deployed_manifest_metrics(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     settings.deployed_model_manifest.parent.mkdir(parents=True, exist_ok=True)

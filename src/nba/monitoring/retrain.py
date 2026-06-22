@@ -45,7 +45,7 @@ from nba.monitoring.signals import (
     append_report,
     build_drift_report,
 )
-from nba.monitoring.store_reader import AuditRow, DeployedManifest
+from nba.monitoring.store_reader import AuditRow, DeployedManifest, as_utc
 from nba.monitoring.triggers import RetrainTrigger, evaluate_triggers
 from nba.ope.estimators import LoggedBatch, dr, eval_action_matrix, q_matrix
 from nba.ope.gate import PromotionGate
@@ -70,13 +70,6 @@ def _labeled(events: list[BanditEvent]) -> list[BanditEvent]:
     return [e for e in events if e.reward is not None]
 
 
-def _as_utc(dt: datetime) -> datetime:
-    """Normalize a timestamp for comparison (naive datetimes are treated as UTC)."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
-
-
 def _count_labeled_since(
     events: list[BanditEvent], *, promoted_at: datetime | None
 ) -> int:
@@ -84,8 +77,8 @@ def _count_labeled_since(
     labeled = _labeled(events)
     if promoted_at is None:
         return len(labeled)
-    promote_cutoff = _as_utc(promoted_at)
-    return sum(1 for e in labeled if _as_utc(e.timestamp) > promote_cutoff)
+    promote_cutoff = as_utc(promoted_at)
+    return sum(1 for e in labeled if as_utc(e.timestamp) > promote_cutoff)
 
 
 def _split_windows(
@@ -329,7 +322,9 @@ class RetrainLoop:
 
         # Compute days_since_promote + n_new for the scheduled ceiling.
         manifest = _read_manifest_safe(settings)
-        days_since = (now - manifest.promoted_at).total_seconds() / 86400.0 if manifest else 0.0
+        days_since = (
+            (now - as_utc(manifest.promoted_at)).total_seconds() / 86400.0 if manifest else 0.0
+        )
         n_new = _count_labeled_since(events, promoted_at=manifest.promoted_at if manifest else None)
 
         trigger = evaluate_triggers(
