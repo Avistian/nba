@@ -106,10 +106,13 @@ def _make_handler(settings: Settings) -> type[BaseHTTPRequestHandler]:
                 self.end_headers()
                 return
             now = time.monotonic()
-            if not self._cached or (now - self._last_refresh) >= settings.metrics_refresh_seconds:
-                self._cached = _render(settings)
+            if (
+                not _MetricsHandler._cached
+                or (now - _MetricsHandler._last_refresh) >= settings.metrics_refresh_seconds
+            ):
+                _MetricsHandler._cached = _render(settings)
                 _MetricsHandler._last_refresh = now
-            body = self._cached.encode("utf-8")
+            body = _MetricsHandler._cached.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))

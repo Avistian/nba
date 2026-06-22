@@ -180,6 +180,49 @@ def test_overlap_min_p_from_report_when_no_store(tmp_path: Path) -> None:
             raise AssertionError(f"exporter references oracle attribute {node.attr!r}")
 
 
+def test_metrics_handler_caches_across_requests(tmp_path: Path, monkeypatch) -> None:
+    """Each HTTP request gets a new handler; cache must live on the handler class."""
+    import importlib.util
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    settings = _settings(tmp_path)
+    settings.metrics_refresh_seconds = 60
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "run_metrics_exporter.py"
+    spec = importlib.util.spec_from_file_location("run_metrics_exporter", script)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    render_calls = 0
+
+    def counting_render(_settings: Settings) -> str:
+        nonlocal render_calls
+        render_calls += 1
+        return "# cached metrics\n"
+
+    monkeypatch.setattr(mod, "_render", counting_render)
+
+    handler_cls = mod._make_handler(settings)
+    handler_cls._cached = ""
+    handler_cls._last_refresh = 0.0
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        for _ in range(2):
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=5) as resp:
+                assert resp.read()
+        assert render_calls == 1
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
 def test_exporter_disabled_via_env_noop(tmp_path: Path, monkeypatch) -> None:
     """``run_metrics_exporter.py --once`` with exporter disabled exits 0 cleanly."""
     tmp_path.parents[-1] if tmp_path.parents else Path.cwd()
