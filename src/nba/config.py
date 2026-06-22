@@ -95,6 +95,18 @@ class Settings(BaseSettings):
     metrics_exporter_port: int = 9091
     metrics_refresh_seconds: int = 30  # how often the exporter re-reads artifacts between scrapes
 
+    # Phase 19 — email alerting on significant drift. Off by default; creds via env only.
+    alert_email_enabled: bool = False
+    alert_smtp_host: str = ""
+    alert_smtp_port: int = 587
+    alert_smtp_user: str = ""
+    alert_smtp_password: str = ""
+    alert_smtp_use_tls: bool = True
+    alert_email_from: str = ""
+    alert_email_to: str = ""  # comma-separated recipients
+    alert_min_triggered_signals: int = 1
+    alert_debounce_minutes: int = 30
+
     def ensure_dirs(self) -> None:
         """Create all configured output directories. Idempotent."""
         for path in (

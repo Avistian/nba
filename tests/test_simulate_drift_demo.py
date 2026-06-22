@@ -52,6 +52,8 @@ def _settings(tmp_path: Path) -> Settings:
         model_dir=tmp_path / "models",
         db_path=tmp_path / "events.db",
         deployed_model_manifest=tmp_path / "models" / "deployed.json",
+        monitoring_report_path=tmp_path / "monitoring" / "drift_reports.jsonl",
+        retrain_audit_path=tmp_path / "monitoring" / "retrain_audit.jsonl",
     )
 
 
@@ -175,7 +177,7 @@ def test_persist_events_does_not_unlink_production_db(tmp_path: Path) -> None:
 def test_persist_events_resets_only_demo_db(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import simulate_drift_demo as mod
+    import drift_demo_common as common
 
     demo_db = tmp_path / "drift_demo" / "events.db"
     demo_db.parent.mkdir(parents=True)
@@ -191,7 +193,7 @@ def test_persist_events_resets_only_demo_db(
     finally:
         store.close()
 
-    monkeypatch.setattr(mod, "_DRIFT_DEMO_DB_PATH", demo_db)
+    monkeypatch.setattr(common, "DRIFT_DEMO_DB_PATH", demo_db)
     fresh = generate_logs(40, settings=settings, seed=2)
     _persist_events(settings, fresh)
 
@@ -207,13 +209,6 @@ def test_frozen_shifts_append_one_drift_report_per_shift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Each frozen shift must write exactly one drift report (RetrainLoop, not _score_drift too)."""
-    import simulate_drift_demo as mod
-
-    demo_drift = tmp_path / "drift_demo" / "monitoring" / "drift_reports.jsonl"
-    demo_audit = tmp_path / "drift_demo" / "monitoring" / "retrain_audit.jsonl"
-    monkeypatch.setattr(mod, "_DRIFT_DEMO_MONITORING_REPORT", demo_drift)
-    monkeypatch.setattr(mod, "_DRIFT_DEMO_RETRAIN_AUDIT", demo_audit)
-
     settings = _settings(tmp_path)
     report = run_drift_demo(
         n_pre=200,
@@ -226,7 +221,8 @@ def test_frozen_shifts_append_one_drift_report_per_shift(
 
     frozen_shifts = sum(1 for s in report.shift_records if s.phase == "frozen")
     post_shifts = sum(1 for s in report.shift_records if s.phase == "post_retrain")
-    n_reports = len(demo_drift.read_text(encoding="utf-8").strip().splitlines())
+    drift_path = _demo_settings(settings).monitoring_report_path
+    n_reports = len(drift_path.read_text(encoding="utf-8").strip().splitlines())
     assert frozen_shifts == 3
     assert n_reports == frozen_shifts + post_shifts
 
@@ -393,6 +389,8 @@ def test_run_drift_demo_uses_isolated_artifact_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """End-to-end demo writes only under the drift-demo tree, not production artifacts."""
+    import drift_demo_common as common
+
     prod_db = tmp_path / "artifacts" / "events.db"
     prod_models = tmp_path / "artifacts" / "models"
     prod_deployed = prod_models / "deployed.json"
@@ -414,6 +412,16 @@ def test_run_drift_demo_uses_isolated_artifact_tree(
 
     import simulate_drift_demo as mod
 
+    monkeypatch.setattr(common, "DEFAULT_PRODUCTION_DB_PATH", prod_db)
+    monkeypatch.setattr(common, "DEFAULT_PRODUCTION_MODEL_DIR", prod_models)
+    monkeypatch.setattr(common, "DEFAULT_PRODUCTION_DEPLOYED_MANIFEST", prod_deployed)
+    monkeypatch.setattr(common, "DEFAULT_PRODUCTION_MONITORING_REPORT", prod_drift)
+    monkeypatch.setattr(common, "DEFAULT_PRODUCTION_RETRAIN_AUDIT", prod_audit)
+    monkeypatch.setattr(common, "DRIFT_DEMO_DB_PATH", demo_db)
+    monkeypatch.setattr(common, "DRIFT_DEMO_MODEL_DIR", demo_models)
+    monkeypatch.setattr(common, "DRIFT_DEMO_DEPLOYED_MANIFEST", demo_deployed)
+    monkeypatch.setattr(common, "DRIFT_DEMO_MONITORING_REPORT", demo_drift)
+    monkeypatch.setattr(common, "DRIFT_DEMO_RETRAIN_AUDIT", demo_audit)
     monkeypatch.setattr(mod, "_DEFAULT_PRODUCTION_DB_PATH", prod_db)
     monkeypatch.setattr(mod, "_DEFAULT_PRODUCTION_MODEL_DIR", prod_models)
     monkeypatch.setattr(mod, "_DEFAULT_PRODUCTION_DEPLOYED_MANIFEST", prod_deployed)
@@ -464,13 +472,16 @@ def test_run_drift_demo_uses_isolated_artifact_tree(
 
 def test_run_drift_demo_uses_isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end demo writes to the drift-demo store, leaving production db untouched."""
+    import drift_demo_common as common
+    import simulate_drift_demo as mod
+
     prod_db = tmp_path / "artifacts" / "events.db"
     prod_db.parent.mkdir(parents=True)
     prod_db.write_text("live production log", encoding="utf-8")
     demo_db = tmp_path / "artifacts" / "drift_demo" / "events.db"
 
-    import simulate_drift_demo as mod
-
+    monkeypatch.setattr(common, "DEFAULT_PRODUCTION_DB_PATH", prod_db)
+    monkeypatch.setattr(common, "DRIFT_DEMO_DB_PATH", demo_db)
     monkeypatch.setattr(mod, "_DEFAULT_PRODUCTION_DB_PATH", prod_db)
     monkeypatch.setattr(mod, "_DRIFT_DEMO_DB_PATH", demo_db)
 

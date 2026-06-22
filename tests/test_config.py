@@ -40,6 +40,11 @@ def test_phase18_flags_default_off() -> None:
     assert s.drift_feature_psi_threshold == pytest.approx(0.20)
     assert s.metrics_exporter_port == 9091
     assert s.retrain_time_decay_halflife_days is None
+    # Phase 19 alert flags
+    assert s.alert_email_enabled is False
+    assert s.alert_smtp_host == ""
+    assert s.alert_min_triggered_signals == 1
+    assert s.alert_debounce_minutes == 30
 
 
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:

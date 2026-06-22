@@ -27,91 +27,39 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-# Allow reuse of run_demo helpers (oracle, dense block) — same pattern as eval/metrics.py.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import drift_demo_common as _ddc  # noqa: E402
+from drift_demo_common import (  # noqa: E402
+    _calib_mae,
+    _demo_settings,
+    _load_promoted_stack,
+    _mean_regret,
+    _persist_events,
+    _score_drift,
+    _signals_from_report,
+)
+
+# Re-export path constants for tests (monkeypatch targets).
+_DEFAULT_PRODUCTION_DB_PATH = _ddc._DEFAULT_PRODUCTION_DB_PATH
+_DEFAULT_PRODUCTION_DEPLOYED_MANIFEST = _ddc._DEFAULT_PRODUCTION_DEPLOYED_MANIFEST
+_DEFAULT_PRODUCTION_MODEL_DIR = _ddc._DEFAULT_PRODUCTION_MODEL_DIR
+_DEFAULT_PRODUCTION_MONITORING_REPORT = _ddc._DEFAULT_PRODUCTION_MONITORING_REPORT
+_DEFAULT_PRODUCTION_RETRAIN_AUDIT = _ddc._DEFAULT_PRODUCTION_RETRAIN_AUDIT
+_DRIFT_DEMO_DB_PATH = _ddc._DRIFT_DEMO_DB_PATH
+_DRIFT_DEMO_DEPLOYED_MANIFEST = _ddc._DRIFT_DEMO_DEPLOYED_MANIFEST
+_DRIFT_DEMO_MODEL_DIR = _ddc._DRIFT_DEMO_MODEL_DIR
+_DRIFT_DEMO_MONITORING_REPORT = _ddc._DRIFT_DEMO_MONITORING_REPORT
+_DRIFT_DEMO_RETRAIN_AUDIT = _ddc._DRIFT_DEMO_RETRAIN_AUDIT
+_demo_db_path = _ddc.demo_db_path
 
 from nba.config import Settings  # noqa: E402
 from nba.data.drift import DriftSpec, generate_logs_with_drift  # noqa: E402
 from nba.data.simulator import generate_logs  # noqa: E402
 from nba.eval.oracle import oracle_for  # noqa: E402
-from nba.monitoring.retrain import (  # noqa: E402
-    RetrainLoop,
-    _split_windows,
-    bootstrap_deployed,
-    load_deployed_stack,
-)
-from nba.monitoring.signals import (  # noqa: E402
-    DriftReportContext,
-    append_report,
-    build_drift_report,
-)
+from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed  # noqa: E402
 from nba.monitoring.store_reader import read_deployed_manifest  # noqa: E402
-from nba.ope.estimators import LoggedBatch  # noqa: E402
 from nba.ope.gate import PromotionGate  # noqa: E402
-from nba.reward.model import RewardModel  # noqa: E402
-
-# Isolated artifact tree for the drift demo — never the shared production defaults.
-_DRIFT_DEMO_ROOT = Path("artifacts/drift_demo")
-_DRIFT_DEMO_DB_PATH = _DRIFT_DEMO_ROOT / "events.db"
-_DRIFT_DEMO_MODEL_DIR = _DRIFT_DEMO_ROOT / "models"
-_DRIFT_DEMO_DEPLOYED_MANIFEST = _DRIFT_DEMO_MODEL_DIR / "deployed.json"
-_DRIFT_DEMO_MONITORING_REPORT = _DRIFT_DEMO_ROOT / "monitoring" / "drift_reports.jsonl"
-_DRIFT_DEMO_RETRAIN_AUDIT = _DRIFT_DEMO_ROOT / "monitoring" / "retrain_audit.jsonl"
-
-_DEFAULT_PRODUCTION_DB_PATH = Path("artifacts/events.db")
-_DEFAULT_PRODUCTION_MODEL_DIR = Path("artifacts/models")
-_DEFAULT_PRODUCTION_DEPLOYED_MANIFEST = Path("artifacts/models/deployed.json")
-_DEFAULT_PRODUCTION_MONITORING_REPORT = Path("artifacts/monitoring/drift_reports.jsonl")
-_DEFAULT_PRODUCTION_RETRAIN_AUDIT = Path("artifacts/monitoring/retrain_audit.jsonl")
-
-
-def _redirect_production_path(value: Path, *, production: Path, demo: Path) -> Path:
-    """Return ``demo`` when ``value`` is the shared production default."""
-    if value.resolve() == production.resolve():
-        return demo
-    return value
-
-
-def _demo_db_path(settings: Settings) -> Path:
-    """Return a demo-safe db path, redirecting away from the shared production store."""
-    return _redirect_production_path(
-        settings.db_path,
-        production=_DEFAULT_PRODUCTION_DB_PATH,
-        demo=_DRIFT_DEMO_DB_PATH,
-    )
-
-
-def _demo_settings(settings: Settings) -> Settings:
-    """Redirect production artifact defaults to the isolated drift-demo tree."""
-    return settings.model_copy(
-        update={
-            "db_path": _demo_db_path(settings),
-            "model_dir": _redirect_production_path(
-                settings.model_dir,
-                production=_DEFAULT_PRODUCTION_MODEL_DIR,
-                demo=_DRIFT_DEMO_MODEL_DIR,
-            ),
-            "deployed_model_manifest": _redirect_production_path(
-                settings.deployed_model_manifest,
-                production=_DEFAULT_PRODUCTION_DEPLOYED_MANIFEST,
-                demo=_DRIFT_DEMO_DEPLOYED_MANIFEST,
-            ),
-            "monitoring_report_path": _redirect_production_path(
-                settings.monitoring_report_path,
-                production=_DEFAULT_PRODUCTION_MONITORING_REPORT,
-                demo=_DRIFT_DEMO_MONITORING_REPORT,
-            ),
-            "retrain_audit_path": _redirect_production_path(
-                settings.retrain_audit_path,
-                production=_DEFAULT_PRODUCTION_RETRAIN_AUDIT,
-                demo=_DRIFT_DEMO_RETRAIN_AUDIT,
-            ),
-        }
-    )
-
-
-def _is_drift_demo_db(db_path: Path) -> bool:
-    return db_path.resolve() == _DRIFT_DEMO_DB_PATH.resolve()
 
 
 @dataclass
@@ -154,88 +102,6 @@ class DriftDemoReport:
         }
 
 
-def _mean_regret(events, oracle) -> float:
-    if not events:
-        return 0.0
-    regrets = []
-    for e in events:
-        chosen = oracle.true_reward(e.context, e.action)
-        best = oracle.true_reward(e.context, oracle.true_best_action(e.context))
-        regrets.append(best - chosen)
-    return float(np.mean(regrets))
-
-
-def _calib_mae(model: RewardModel, events) -> float:
-    if not events:
-        return 0.0
-    errs = [abs(model.q(e.context, e.action) - (e.reward or 0.0)) for e in events]
-    return float(np.mean(errs))
-
-
-def _load_promoted_stack(
-    *,
-    settings: Settings,
-    events: list,
-) -> tuple[RewardModel, object, float]:
-    """Reload model + policy after promotion so drift scoring uses an aligned stack."""
-    deployed_model, deployed_policy, _manifest, baseline_dr = load_deployed_stack(
-        settings=settings, events=events
-    )
-    return deployed_model, deployed_policy, baseline_dr
-
-
-def _signals_from_report(report) -> tuple[dict[str, float], bool]:
-    """Extract shift-record signal values from a scored DriftReport."""
-    return {s.name: s.value for s in report.signals}, report.overlap_ok
-
-
-def _score_drift(
-    *,
-    model,
-    policy,
-    events,
-    settings,
-    deployed_dr,
-    promoted_at=None,
-):
-    """Score drift with the same reference/recent windows as ``RetrainLoop.run``."""
-    reference_events, recent_events = _split_windows(
-        events, settings=settings, promoted_at=promoted_at
-    )
-    ref = LoggedBatch.from_events(reference_events)
-    recent = LoggedBatch.from_events(recent_events)
-    report = build_drift_report(
-        ctx=DriftReportContext(
-            model=model,
-            policy=policy,
-            reference=ref,
-            recent=recent,
-            deployed_dr=deployed_dr,
-        ),
-        settings=settings,
-    )
-    append_report(report, settings.monitoring_report_path)
-    return _signals_from_report(report)
-
-
-def _persist_events(settings: Settings, events: list) -> int:
-    """Write labeled events to the EventStore so exporter rollups populate Grafana panels."""
-    from nba.api.store import EventStore  # noqa: PLC0415
-
-    labeled = [e for e in events if e.reward is not None and e.outcome is not None]
-    if not labeled:
-        return 0
-    db_path = _demo_db_path(settings)
-    # Reset only the isolated demo store; production logs are append-only and must never be wiped.
-    if _is_drift_demo_db(db_path) and db_path.exists():
-        db_path.unlink()
-    store = EventStore(db_path)
-    try:
-        return store.ingest_bandit_events(labeled, policy_name="drift_demo")
-    finally:
-        store.close()
-
-
 def run_drift_demo(
     *,
     n_pre: int = 15_000,
@@ -250,7 +116,6 @@ def run_drift_demo(
     settings.ensure_dirs()
     np.random.default_rng(seed)
 
-    # 1. Pre-drift logs → bootstrap deployed model + manifest.
     pre_events = generate_logs(n_pre, settings=settings, seed=seed)
     deployed_model, deployed_policy, manifest, baseline_dr = bootstrap_deployed(
         settings=settings, events=pre_events
@@ -267,7 +132,6 @@ def run_drift_demo(
         promote_shift=None,
     )
 
-    # 2. Generate one batch of post-drift logs we will slice into K "shifts".
     spec = DriftSpec(at_fraction=0.0, reward_scale=1.3, knock_evening_boost=0.15)
     post_events_all = generate_logs_with_drift(
         n_post * shifts, settings=settings, seed=seed + 100, spec=spec
@@ -275,7 +139,6 @@ def run_drift_demo(
     per_shift = max(1, len(post_events_all) // shifts)
     post_shifts = [post_events_all[i * per_shift : (i + 1) * per_shift] for i in range(shifts)]
 
-    # 3. Serve K shifts with the frozen deployed model; monitor after each.
     gate = PromotionGate(z=settings.ope_z, min_lift=settings.ope_min_lift)
     loop = RetrainLoop(settings=settings, gate=gate)
     promote_shift: int | None = None
@@ -287,8 +150,6 @@ def run_drift_demo(
         regret = _mean_regret(shift_events, oracle)
         mean_reward = float(np.mean([e.reward for e in shift_events if e.reward is not None]))
 
-        # Conditional retrain: RetrainLoop is the sole JSONL writer per frozen shift
-        # (matches one production monitor pass).
         if not report.promoted:
             outcome = loop.run(
                 deployed_model=deployed_model,
@@ -342,7 +203,6 @@ def run_drift_demo(
             )
         )
 
-    # 4. Serve K more shifts only after a successful promote (not on HOLD / no trigger).
     more_post: list = []
     if report.promoted:
         more_post = generate_logs_with_drift(
@@ -380,7 +240,6 @@ def run_drift_demo(
 
     report.promote_shift = promote_shift
 
-    # Seed EventStore so Grafana panels for labeled events / mean reward / min_p populate.
     all_events = list(pre_events) + list(post_events_all) + list(more_post)
     n_ingested = _persist_events(settings, all_events)
     if n_ingested:
