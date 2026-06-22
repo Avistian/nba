@@ -263,14 +263,16 @@ def _append_audit(*, settings: Settings, row: AuditRow) -> None:
 
 def _gate_baseline_value(
     *,
-    deployed_dr: float | None,
     deployed_model: RewardModel,
     deployed_policy: Policy,
     gate_batch: LoggedBatch,
 ) -> float:
-    """Return the promotion-gate baseline in OPE DR units (same estimator as the candidate)."""
-    if deployed_dr is not None:
-        return float(deployed_dr)
+    """Return the promotion-gate baseline in OPE DR units (same estimator as the candidate).
+
+    Always re-estimates the deployed policy on ``gate_batch`` so the baseline and candidate
+    are compared on the same held-out rows. Manifest ``deployed_dr`` is for drift monitoring
+    only and must not short-circuit this path.
+    """
     q_hat_deployed = q_matrix(deployed_model, gate_batch.contexts)
     pi_e_deployed = eval_action_matrix(deployed_policy, gate_batch.contexts)
     return float(dr(gate_batch, q_hat_deployed, pi_e_deployed).value)
@@ -377,7 +379,6 @@ class RetrainLoop:
         # Gate on the held-out tail of the recent window.
         q_hat_candidate = q_matrix(candidate, gate_batch.contexts)
         baseline_value = _gate_baseline_value(
-            deployed_dr=deployed_dr,
             deployed_model=deployed_model,
             deployed_policy=deployed_policy,
             gate_batch=gate_batch,

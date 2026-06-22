@@ -41,10 +41,13 @@ recent rows. The same holdout split applies when bootstrapping the initial ``dep
 
 *Confirmed: retrain loop regression for in-sample DR inflation, 2026-06-22.*
 
-## R7: Retrain gate baseline must be OPE DR, not on-policy mean reward
+## R7: Retrain gate baseline must be OPE DR on the gate holdout batch
 
-When `deployed_dr` is omitted, compute the deployed policy's DR on the gate holdout batch.
-`PromotionGate` compares candidate DR lower bound to `baseline_value + min_lift`; mixing mean
-logged reward with DR breaks promote/hold decisions.
+Always re-estimate the deployed policy's DR on the same held-out rows used for the candidate.
+Manifest ``deployed_dr`` is for drift monitoring (``rolling_dr_drop``) only and must not
+short-circuit the promotion gate. ``PromotionGate`` compares candidate DR lower bound to
+``baseline_value + min_lift``; mixing stale manifest values or mean logged reward with DR
+breaks promote/hold decisions.
 
-*Confirmed: `test_gate_baseline_uses_deployed_dr_when_deployed_dr_omitted`, 2026-06-22.*
+*Confirmed: `test_gate_baseline_uses_deployed_dr_when_deployed_dr_omitted`,
+`test_gate_baseline_recomputes_on_holdout_when_deployed_dr_supplied`, 2026-06-22.*

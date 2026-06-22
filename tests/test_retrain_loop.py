@@ -222,40 +222,54 @@ def test_bootstrap_deployed_dr_uses_holdout_not_training_rows(tmp_path: Path) ->
 
 
 def test_promote_when_gate_passes(tmp_path: Path) -> None:
-    """Force a trigger + a candidate that beats the deployed DR → promote."""
+    """Force a trigger + gate pass → promote, manifest update, candidate dir, audit."""
+
+    class _ForcePromoteGate(PromotionGate):
+        """Promotion plumbing test: OPE math is covered by gate-baseline tests."""
+
+        def evaluate(
+            self,
+            candidate: Any,
+            batch: LoggedBatch,
+            q_hat: np.ndarray,
+            *,
+            baseline_value: float,
+            clip: float | None = None,
+            rng: np.random.Generator | None = None,
+        ) -> GateDecision:
+            decision = super().evaluate(
+                candidate,
+                batch,
+                q_hat,
+                baseline_value=baseline_value,
+                clip=clip,
+                rng=rng,
+            )
+            return GateDecision(
+                promote=True,
+                candidate=decision.candidate,
+                baseline_value=decision.baseline_value,
+                lift=decision.lift,
+                lower_bound=decision.lower_bound,
+                reason=decision.reason,
+            )
+
     settings = _settings(tmp_path)
     events, deployed, policy, baseline_dr = _bootstrap(tmp_path, settings)
 
-    # Lower thresholds so any drift triggers; lower baseline_dr so a fresh fit clears the gate.
     settings = settings.model_copy(
         update={
             "drift_reward_psi_threshold": 0.0,  # anything triggers
             "drift_calibration_delta_threshold": -1.0,  # always triggered
         }
     )
-    # Pre-write a manifest with a low deployed_dr so the gate passes.
-    low_dr = baseline_dr - 0.5
-    settings.deployed_model_manifest.parent.mkdir(parents=True, exist_ok=True)
-    settings.deployed_model_manifest.write_text(
-        json.dumps(
-            {
-                "model_dir": str(settings.model_dir),
-                "promoted_at": datetime.now(UTC).isoformat(),
-                "dr_value": low_dr,
-                "dr_lower_bound": low_dr,
-                "baseline_value": low_dr,
-                "feature_names": [],
-            }
-        ),
-        encoding="utf-8",
-    )
 
-    loop = RetrainLoop(settings=settings, gate=PromotionGate(z=1.96, min_lift=0.0))
+    loop = RetrainLoop(settings=settings, gate=_ForcePromoteGate(z=1.96, min_lift=0.0))
     outcome = loop.run(
         deployed_model=deployed,
         deployed_policy=policy,
         events=events,
-        deployed_dr=low_dr,
+        deployed_dr=baseline_dr,
     )
     assert outcome.trigger.should_retrain
     assert outcome.promoted
@@ -306,6 +320,68 @@ def test_hold_when_gate_fails(tmp_path: Path) -> None:
     # Audit row is a hold.
     audit = read_retrain_audit(settings.retrain_audit_path)
     assert audit[-1].verdict == "hold"
+
+
+def test_gate_baseline_recomputes_on_holdout_when_deployed_dr_supplied(
+    tmp_path: Path,
+) -> None:
+    """Manifest deployed_dr must not bypass holdout re-estimation for the promotion gate."""
+    settings = _settings(tmp_path).model_copy(
+        update={
+            "drift_reward_psi_threshold": 0.0,
+            "drift_calibration_delta_threshold": -1.0,
+        }
+    )
+    events, deployed, policy, _baseline_dr = _bootstrap(tmp_path, settings)
+
+    _reference_events, recent_events = retrain_module._split_windows(events, settings=settings)
+    _train_recent, gate_events = retrain_module._split_recent_for_training_and_gate(
+        recent_events
+    )
+    gate_batch = LoggedBatch.from_events(gate_events)
+    expected_deployed_dr = float(
+        dr(
+            gate_batch,
+            q_matrix(deployed, gate_batch.contexts),
+            eval_action_matrix(policy, gate_batch.contexts),
+        ).value
+    )
+    stale_manifest_dr = expected_deployed_dr - 0.5
+
+    captured: dict[str, float] = {}
+
+    class _CapturingGate(PromotionGate):
+        def evaluate(
+            self,
+            candidate: Any,
+            batch: LoggedBatch,
+            q_hat: np.ndarray,
+            *,
+            baseline_value: float,
+            clip: float | None = None,
+            rng: np.random.Generator | None = None,
+        ) -> GateDecision:
+            captured["baseline_value"] = baseline_value
+            return super().evaluate(
+                candidate,
+                batch,
+                q_hat,
+                baseline_value=baseline_value,
+                clip=clip,
+                rng=rng,
+            )
+
+    loop = RetrainLoop(settings=settings, gate=_CapturingGate(z=1.96, min_lift=5.0))
+    outcome = loop.run(
+        deployed_model=deployed,
+        deployed_policy=policy,
+        events=events,
+        deployed_dr=stale_manifest_dr,
+    )
+
+    assert outcome.trigger.should_retrain
+    assert captured["baseline_value"] == pytest.approx(expected_deployed_dr)
+    assert captured["baseline_value"] != pytest.approx(stale_manifest_dr)
 
 
 def test_gate_baseline_uses_deployed_dr_when_deployed_dr_omitted(
