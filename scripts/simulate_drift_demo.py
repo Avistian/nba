@@ -247,9 +247,11 @@ def run_drift_demo(
             )
         )
 
-        # After the second frozen shift, attempt a retrain (typical trigger window).
-        if k == 1 and not report.promoted:
-            events_for_retrain = list(reference_events) + list(shift_events)
+        # Conditional retrain: RetrainLoop evaluates drift triggers each shift.
+        if not report.promoted:
+            events_for_retrain = list(pre_events) + [
+                e for s in post_shifts[: k + 1] for e in s
+            ]
             outcome = loop.run(
                 deployed_model=deployed_model,
                 deployed_policy=deployed_policy,

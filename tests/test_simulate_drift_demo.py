@@ -161,6 +161,47 @@ def test_persist_events_resets_only_demo_db(
         store.close()
 
 
+def test_retrain_loop_runs_each_frozen_shift_not_only_k_eq_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RetrainLoop.run must run after every frozen shift until promoted, not only at k==1."""
+    calls: list[int] = []
+
+    def _spy_run(self, **kwargs) -> RetrainOutcome:
+        calls.append(len(kwargs.get("events", [])))
+        return RetrainOutcome(
+            promoted=False,
+            trigger=RetrainTrigger(should_retrain=False, reasons=(), overlap_ok=True),
+            candidate_metrics={},
+            gate_reason="no trigger fired",
+            candidate_model_dir=None,
+        )
+
+    monkeypatch.setattr(RetrainLoop, "run", _spy_run)
+
+    settings = _settings(tmp_path)
+    run_drift_demo(
+        n_pre=200,
+        n_post=100,
+        shifts=1,
+        seed=3,
+        settings=settings,
+        report_path=None,
+    )
+    assert len(calls) == 1
+
+    calls.clear()
+    run_drift_demo(
+        n_pre=200,
+        n_post=100,
+        shifts=3,
+        seed=3,
+        settings=settings,
+        report_path=None,
+    )
+    assert len(calls) == 3
+
+
 def test_no_post_retrain_shifts_when_retrain_holds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
