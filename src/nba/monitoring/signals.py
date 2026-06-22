@@ -49,6 +49,7 @@ class DriftReport:
     n_recent: int
     signals: tuple[DriftSignal, ...]
     overlap_ok: bool
+    n_labeled_total: int | None = None
 
     def signal(self, name: str) -> DriftSignal:
         """Return the signal named ``name`` (raises if missing)."""
@@ -59,7 +60,7 @@ class DriftReport:
 
     def to_json(self) -> dict[str, object]:
         """Return a JSON-serializable mapping for one append-only line."""
-        return {
+        payload: dict[str, object] = {
             "timestamp": self.timestamp.isoformat(),
             "n_reference": self.n_reference,
             "n_recent": self.n_recent,
@@ -75,15 +76,24 @@ class DriftReport:
                 for s in self.signals
             ],
         }
+        if self.n_labeled_total is not None:
+            payload["n_labeled_total"] = self.n_labeled_total
+        return payload
 
     @classmethod
     def from_json(cls, data: dict[str, object]) -> DriftReport:
         """Reconstruct a report from one parsed JSONL line."""
+        n_labeled_total = data.get("n_labeled_total")
         return cls(
             timestamp=datetime.fromisoformat(str(data["timestamp"])),
             n_reference=int(data["n_reference"]),  # type: ignore[arg-type]
             n_recent=int(data["n_recent"]),  # type: ignore[arg-type]
             overlap_ok=bool(data["overlap_ok"]),
+            n_labeled_total=(
+                int(n_labeled_total)  # type: ignore[arg-type]
+                if n_labeled_total is not None
+                else None
+            ),
             signals=tuple(
                 DriftSignal(
                     name=str(s["name"]),  # type: ignore[index]
@@ -325,6 +335,7 @@ def build_drift_report(
     ctx: DriftReportContext,
     settings: Settings,
     now: datetime | None = None,
+    n_labeled_total: int | None = None,
 ) -> DriftReport:
     """Build a full :class:`DriftReport` from the five per-signal scorers."""
     signals: list[DriftSignal] = [
@@ -347,6 +358,7 @@ def build_drift_report(
         n_recent=len(ctx.recent),
         signals=tuple(signals),
         overlap_ok=overlap_ok,
+        n_labeled_total=n_labeled_total,
     )
 
 

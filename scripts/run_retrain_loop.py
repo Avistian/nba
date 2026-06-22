@@ -96,6 +96,10 @@ def main() -> None:
         deployed_model=model, deployed_policy=policy, events=labeled, deployed_dr=deployed_dr
     )
 
+    if outcome.report is None:
+        print(outcome.gate_reason)
+        return
+
     verdict = "PROMOTE" if outcome.promoted else "HOLD"
     print(f"retrain verdict: {verdict}")
     print(f"  trigger.should_retrain: {outcome.trigger.should_retrain}")

@@ -22,7 +22,7 @@ from nba.api.store import EventStore  # noqa: E402
 from nba.bandits.epsilon_greedy import EpsilonGreedy  # noqa: E402
 from nba.config import Settings  # noqa: E402
 from nba.data.simulator import frame_to_events  # noqa: E402
-from nba.monitoring.cadence import evaluate_monitor_cadence  # noqa: E402
+from nba.monitoring.cadence import count_labeled, evaluate_monitor_cadence  # noqa: E402
 from nba.monitoring.retrain import bootstrap_deployed  # noqa: E402
 from nba.monitoring.signals import DriftReportContext, build_drift_report  # noqa: E402
 from nba.monitoring.store_reader import read_deployed_manifest  # noqa: E402
@@ -110,6 +110,7 @@ def main() -> None:
             deployed_dr=deployed_dr,
         ),
         settings=settings,
+        n_labeled_total=count_labeled(events),
     )
     from nba.monitoring.signals import append_report  # noqa: PLC0415
 

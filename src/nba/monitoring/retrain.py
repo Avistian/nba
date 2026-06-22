@@ -39,7 +39,7 @@ from nba.bandits.base import Policy
 from nba.bandits.epsilon_greedy import EpsilonGreedy
 from nba.bandits.thompson import BootstrapEnsemble, ThompsonSampling
 from nba.config import Settings
-from nba.monitoring.cadence import count_labeled_since
+from nba.monitoring.cadence import count_labeled, count_labeled_since
 from nba.monitoring.signals import (
     DriftReport,
     DriftReportContext,
@@ -328,6 +328,7 @@ class RetrainLoop:
             ),
             settings=settings,
             now=now,
+            n_labeled_total=count_labeled(events),
         )
         append_report(report, settings.monitoring_report_path)
 

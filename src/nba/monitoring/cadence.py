@@ -15,6 +15,11 @@ from nba.monitoring.store_reader import as_utc, latest_drift_report
 from nba.schema import BanditEvent
 
 
+def count_labeled(events: list[BanditEvent]) -> int:
+    """Return the number of events with a realized reward."""
+    return sum(1 for e in events if e.reward is not None)
+
+
 def count_labeled_since(events: list[BanditEvent], since: datetime | None) -> int:
     """Count labeled events logged strictly after ``since``.
 
@@ -25,6 +30,21 @@ def count_labeled_since(events: list[BanditEvent], since: datetime | None) -> in
         return len(labeled)
     cutoff = as_utc(since)
     return sum(1 for e in labeled if as_utc(e.timestamp) > cutoff)
+
+
+def count_new_labeled_since_last_monitor(
+    events: list[BanditEvent],
+    *,
+    settings: Settings,
+) -> int:
+    """Count labeled outcomes accumulated since the most recent drift report."""
+    total = count_labeled(events)
+    latest = latest_drift_report(settings.monitoring_report_path)
+    if latest is None:
+        return total
+    if latest.n_labeled_total is not None:
+        return max(0, total - latest.n_labeled_total)
+    return count_labeled_since(events, latest.timestamp)
 
 
 @dataclass(frozen=True)
@@ -41,14 +61,21 @@ def evaluate_monitor_cadence(events: list[BanditEvent], *, settings: Settings) -
     """Return cadence status using ``settings.monitor_interval_events``."""
     last = latest_drift_report(settings.monitoring_report_path)
     since = last.timestamp if last is not None else None
-    n_since = count_labeled_since(events, since)
+    n_since = count_new_labeled_since_last_monitor(events, settings=settings)
     interval = settings.monitor_interval_events
+    due = interval <= 0 or n_since >= interval
     return MonitorCadence(
-        due=n_since >= interval,
+        due=due,
         events_since_last_report=n_since,
         interval=interval,
         last_report_at=since,
     )
 
 
-__all__ = ["MonitorCadence", "count_labeled_since", "evaluate_monitor_cadence"]
+__all__ = [
+    "MonitorCadence",
+    "count_labeled",
+    "count_labeled_since",
+    "count_new_labeled_since_last_monitor",
+    "evaluate_monitor_cadence",
+]

@@ -8,7 +8,7 @@ from pathlib import Path
 from nba.api.store import EventStore
 from nba.config import Settings
 from nba.data.simulator import generate_logs
-from nba.monitoring.cadence import evaluate_monitor_cadence
+from nba.monitoring.cadence import count_new_labeled_since_last_monitor, evaluate_monitor_cadence
 from nba.monitoring.exporter import build_snapshot, render_prometheus_text
 from nba.monitoring.signals import DriftReport, DriftSignal, append_report
 
@@ -25,7 +25,7 @@ def _settings(tmp_path: Path, *, interval: int = 500) -> Settings:
     )
 
 
-def _drift_report(*, at: datetime) -> DriftReport:
+def _drift_report(*, at: datetime, n_labeled_total: int | None = None) -> DriftReport:
     signals = (
         DriftSignal("reward_psi", 0.05, 0.15, False, "ok"),
         DriftSignal("calibration_drift", 0.0, 0.05, False, "ok"),
@@ -39,6 +39,7 @@ def _drift_report(*, at: datetime) -> DriftReport:
         n_recent=50,
         signals=signals,
         overlap_ok=True,
+        n_labeled_total=n_labeled_total,
     )
 
 
@@ -91,6 +92,23 @@ def test_cadence_not_due_when_few_events_since_last_report(tmp_path: Path) -> No
     cadence = evaluate_monitor_cadence(events, settings=settings)
     assert cadence.events_since_last_report == 4
     assert cadence.due is False
+
+
+def test_cadence_uses_n_labeled_total_when_present(tmp_path: Path) -> None:
+    """When the last report stores ``n_labeled_total``, cadence uses log growth not timestamps."""
+    settings = _settings(tmp_path, interval=500)
+    events = generate_logs(1200, settings=settings, seed=8)
+    settings.monitoring_report_path.parent.mkdir(parents=True, exist_ok=True)
+    append_report(
+        _drift_report(at=datetime.now(UTC), n_labeled_total=700),
+        settings.monitoring_report_path,
+    )
+
+    assert count_new_labeled_since_last_monitor(events, settings=settings) == 500
+
+    cadence = evaluate_monitor_cadence(events, settings=settings)
+    assert cadence.events_since_last_report == 500
+    assert cadence.due is True
 
 
 def test_exporter_emits_monitor_cadence_metrics(tmp_path: Path) -> None:
