@@ -19,14 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import pandas as pd  # noqa: E402
 
 from nba.api.store import EventStore  # noqa: E402
-from nba.bandits.epsilon_greedy import EpsilonGreedy  # noqa: E402
 from nba.config import Settings  # noqa: E402
 from nba.data.simulator import frame_to_events  # noqa: E402
 from nba.monitoring.cadence import evaluate_monitor_cadence  # noqa: E402
-from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed  # noqa: E402
+from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed, load_deployed_stack  # noqa: E402
 from nba.monitoring.store_reader import read_deployed_manifest  # noqa: E402
 from nba.ope.gate import PromotionGate  # noqa: E402
-from nba.reward.model import RewardModel  # noqa: E402
 from nba.schema import BanditEvent  # noqa: E402
 
 
@@ -82,13 +80,9 @@ def main() -> None:
         model, policy, manifest, baseline_dr = bootstrap_deployed(settings=settings, events=labeled)
         deployed_dr = baseline_dr
     else:
-        model = RewardModel.load(Path(manifest.model_dir))
-        policy = EpsilonGreedy(
-            model,
-            epsilon=settings.epsilon,
-            rng=__import__("numpy").random.default_rng(settings.seed),
+        model, policy, manifest, deployed_dr = load_deployed_stack(
+            settings=settings, events=labeled, manifest=manifest
         )
-        deployed_dr = manifest.dr_value
 
     gate = PromotionGate(z=settings.ope_z, min_lift=settings.ope_min_lift)
     loop = RetrainLoop(settings=settings, gate=gate)

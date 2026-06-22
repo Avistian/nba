@@ -19,15 +19,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import pandas as pd  # noqa: E402
 
 from nba.api.store import EventStore  # noqa: E402
-from nba.bandits.epsilon_greedy import EpsilonGreedy  # noqa: E402
 from nba.config import Settings  # noqa: E402
 from nba.data.simulator import frame_to_events  # noqa: E402
 from nba.monitoring.cadence import count_labeled, evaluate_monitor_cadence  # noqa: E402
-from nba.monitoring.retrain import bootstrap_deployed, _split_windows  # noqa: E402
+from nba.monitoring.retrain import bootstrap_deployed, load_deployed_stack, _split_windows  # noqa: E402
 from nba.monitoring.signals import DriftReportContext, build_drift_report  # noqa: E402
 from nba.monitoring.store_reader import read_deployed_manifest  # noqa: E402
 from nba.ope.estimators import LoggedBatch  # noqa: E402
-from nba.reward.model import RewardModel  # noqa: E402
 from nba.schema import BanditEvent  # noqa: E402
 
 
@@ -81,13 +79,9 @@ def main() -> None:
         model, policy, manifest, baseline_dr = bootstrap_deployed(settings=settings, events=labeled)
         deployed_dr = baseline_dr
     else:
-        model = RewardModel.load(Path(manifest.model_dir))
-        policy = EpsilonGreedy(
-            model,
-            epsilon=settings.epsilon,
-            rng=__import__("numpy").random.default_rng(settings.seed),
+        model, policy, manifest, deployed_dr = load_deployed_stack(
+            settings=settings, events=labeled, manifest=manifest
         )
-        deployed_dr = manifest.dr_value
 
     # Split reference/recent (reference excludes pre-promotion events).
     promoted_at = manifest.promoted_at if manifest is not None else None

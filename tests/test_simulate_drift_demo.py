@@ -72,9 +72,8 @@ def test_load_promoted_stack_policy_wraps_loaded_model(tmp_path: Path) -> None:
     )
 
     model, policy, baseline_dr = _load_promoted_stack(
-        candidate_model_dir=candidate_dir,
         settings=settings,
-        baseline_dr=0.1,
+        events=events,
     )
 
     assert policy._model is model

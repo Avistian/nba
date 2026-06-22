@@ -49,6 +49,11 @@ Initial bootstrap must also hold out the DR evaluation rows from reward-model fi
 reference/recent gate split as promotion); scoring DR on in-sample reference rows inflated
 the baseline until the first promotion refreshed it.
 
+`deployed.json` stores `policy_family` (`epsilon_greedy`, `ucb`, `thompson`) and
+`ethical_wrapper` so monitor/retrain batch jobs rebuild the same `pi_e` as production serve.
+Legacy manifests without these fields default to `epsilon_greedy` with no ethics wrapper.
+Thompson reloads a persisted `ensemble.json` under `model_dir` when present.
+
 `deployed.json` `promoted_at` may be timezone-naive (legacy manifests). Normalize via
 `store_reader.as_utc` before subtracting from aware `now` — otherwise `days_since_promote` and
 `nba_deployed_model_age_days` raise `TypeError` and halt scheduled retrain evaluation.

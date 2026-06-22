@@ -51,3 +51,12 @@ breaks promote/hold decisions.
 
 *Confirmed: `test_gate_baseline_uses_deployed_dr_when_deployed_dr_omitted`,
 `test_gate_baseline_recomputes_on_holdout_when_deployed_dr_supplied`, 2026-06-22.*
+
+## R8: Monitor/retrain must rebuild deployed policy from manifest metadata
+
+When `deployed.json` exists, `run_monitor.py` and `run_retrain_loop.py` must load the policy
+family recorded in the manifest (and apply `EthicalPolicy` when `ethical_wrapper` is true).
+Hard-coding `EpsilonGreedy` skews `pi_e`, `rolling_dr_drop`, and promotion-gate baselines when
+production serves Thompson, UCB, or an ethics wrapper.
+
+*Confirmed: `test_load_deployed_stack_thompson_differs_from_epsilon_pi_e`, 2026-06-22.*

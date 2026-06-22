@@ -38,6 +38,7 @@ from nba.api.store import EventStore
 from nba.bandits.base import Policy
 from nba.bandits.epsilon_greedy import EpsilonGreedy
 from nba.bandits.thompson import BootstrapEnsemble, ThompsonSampling
+from nba.bandits.ucb import UCB
 from nba.config import Settings
 from nba.monitoring.cadence import count_labeled, count_labeled_since
 from nba.monitoring.signals import (
@@ -223,6 +224,104 @@ def _fit_weighted(
     return RewardModel(booster=booster, calibrator=calibrator, feature_names=list(FEATURE_NAMES))
 
 
+def _policy_family(policy: Policy) -> str:
+    """Return the base bandit family name, stripping an ``EthicalPolicy`` wrapper."""
+    inner = getattr(policy, "_inner", policy)
+    return str(inner.name)
+
+
+def _is_ethical_policy(policy: Policy) -> bool:
+    from nba.ethics import EthicalPolicy  # noqa: PLC0415
+
+    return isinstance(policy, EthicalPolicy)
+
+
+def _build_policy(
+    model: RewardModel,
+    *,
+    policy_family: str,
+    settings: Settings,
+    rng: np.random.Generator,
+    model_dir: Path | None = None,
+    events: list[BanditEvent] | None = None,
+) -> Policy:
+    """Reconstruct a deployed bandit policy from manifest metadata."""
+    if policy_family == "epsilon_greedy":
+        return EpsilonGreedy(model, epsilon=settings.epsilon, rng=rng)
+    if policy_family == "ucb":
+        return UCB(model, c=settings.ucb_c, temp=settings.softmax_temp, rng=rng)
+    if policy_family == "thompson":
+        if model_dir is not None and (model_dir / "ensemble.json").exists():
+            ensemble = BootstrapEnsemble.load(model_dir)
+            return ThompsonSampling(ensemble, rng=rng)
+        if events:
+            ensemble = BootstrapEnsemble.fit(
+                events, settings=settings, n_models=settings.n_bootstrap
+            )
+            return ThompsonSampling(ensemble, rng=rng)
+        raise ValueError(
+            f"cannot rebuild thompson policy from {model_dir}: "
+            "missing ensemble.json and no events to refit"
+        )
+    raise ValueError(f"unknown policy_family {policy_family!r}")
+
+
+def _assemble_deployed_policy(
+    model: RewardModel,
+    *,
+    policy_family: str,
+    ethical_wrapper: bool,
+    settings: Settings,
+    rng: np.random.Generator,
+    model_dir: Path,
+    events: list[BanditEvent] | None = None,
+) -> Policy:
+    """Build the inner bandit policy and optionally wrap it for sensitive-context caps."""
+    inner = _build_policy(
+        model,
+        policy_family=policy_family,
+        settings=settings,
+        rng=rng,
+        model_dir=model_dir,
+        events=events,
+    )
+    if ethical_wrapper:
+        from nba.ethics import EthicalPolicy  # noqa: PLC0415
+
+        return EthicalPolicy(inner, settings, rng=rng)
+    return inner
+
+
+def load_deployed_stack(
+    *,
+    settings: Settings,
+    events: list[BanditEvent] | None = None,
+    manifest: DeployedManifest | None = None,
+) -> tuple[RewardModel, Policy, DeployedManifest, float]:
+    """Load model + policy from ``deployed.json``, honoring stored policy metadata."""
+    from nba.monitoring.store_reader import read_deployed_manifest  # noqa: PLC0415
+
+    manifest = manifest or read_deployed_manifest(settings.deployed_model_manifest)
+    if manifest is None:
+        raise FileNotFoundError(f"no deployed manifest at {settings.deployed_model_manifest}")
+    model_dir = Path(manifest.model_dir)
+    if not model_dir.exists():
+        raise FileNotFoundError(f"deployed model_dir missing: {model_dir}")
+
+    model = RewardModel.load(model_dir)
+    rng = np.random.default_rng(settings.seed)
+    policy = _assemble_deployed_policy(
+        model,
+        policy_family=manifest.policy_family,
+        ethical_wrapper=manifest.ethical_wrapper,
+        settings=settings,
+        rng=rng,
+        model_dir=model_dir,
+        events=events,
+    )
+    return model, policy, manifest, manifest.dr_value
+
+
 def _write_deployed_manifest(
     *,
     settings: Settings,
@@ -231,6 +330,8 @@ def _write_deployed_manifest(
     dr_lb: float,
     baseline_value: float,
     promoted_at: datetime | None = None,
+    policy_family: str = "epsilon_greedy",
+    ethical_wrapper: bool = False,
 ) -> None:
     """Atomically write ``deployed.json`` (tmp file + ``os.replace``)."""
     settings.deployed_model_manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -241,6 +342,8 @@ def _write_deployed_manifest(
         "dr_lower_bound": float(dr_lb),
         "baseline_value": float(baseline_value),
         "feature_names": [],
+        "policy_family": policy_family,
+        "ethical_wrapper": ethical_wrapper,
     }
     tmp = settings.deployed_model_manifest.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -287,6 +390,8 @@ def _bootstrap_deployed(
         dr_lb=deployed_dr_lb,
         baseline_value=deployed_dr,
         promoted_at=promoted_at,
+        policy_family=_policy_family(policy),
+        ethical_wrapper=_is_ethical_policy(policy),
     )
     manifest = DeployedManifest(
         model_dir=str(settings.model_dir),
@@ -295,6 +400,8 @@ def _bootstrap_deployed(
         dr_lower_bound=deployed_dr_lb,
         baseline_value=deployed_dr,
         feature_names=[],
+        policy_family=_policy_family(policy),
+        ethical_wrapper=_is_ethical_policy(policy),
     )
     return model, policy, manifest, deployed_dr
 
@@ -458,6 +565,8 @@ class RetrainLoop:
                 dr_lb=candidate_metrics["dr_lb"],
                 baseline_value=baseline_value,
                 promoted_at=now,
+                policy_family=_policy_family(deployed_policy),
+                ethical_wrapper=_is_ethical_policy(deployed_policy),
             )
             outcome = RetrainOutcome(
                 promoted=True,
@@ -550,6 +659,7 @@ __all__ = [
     "RetrainLoop",
     "RetrainOutcome",
     "bootstrap_deployed",
+    "load_deployed_stack",
 ]
 
 

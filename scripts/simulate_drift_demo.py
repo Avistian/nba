@@ -30,7 +30,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 # Allow reuse of run_demo helpers (oracle, dense block) — same pattern as eval/metrics.py.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from nba.bandits.epsilon_greedy import EpsilonGreedy  # noqa: E402
 from nba.config import Settings  # noqa: E402
 from nba.data.drift import DriftSpec, generate_logs_with_drift  # noqa: E402
 from nba.data.simulator import generate_logs  # noqa: E402
@@ -39,6 +38,7 @@ from nba.monitoring.retrain import (  # noqa: E402
     RetrainLoop,
     _split_windows,
     bootstrap_deployed,
+    load_deployed_stack,
 )
 from nba.monitoring.signals import (  # noqa: E402
     DriftReportContext,
@@ -174,20 +174,13 @@ def _calib_mae(model: RewardModel, events) -> float:
 
 def _load_promoted_stack(
     *,
-    candidate_model_dir: str | Path,
     settings: Settings,
-    baseline_dr: float,
-) -> tuple[RewardModel, EpsilonGreedy, float]:
-    """Reload model + policy after promotion so drift scoring uses a aligned stack."""
-    deployed_model = RewardModel.load(Path(candidate_model_dir))
-    deployed_policy = EpsilonGreedy(
-        deployed_model,
-        epsilon=settings.epsilon,
-        rng=np.random.default_rng(settings.seed),
+    events: list,
+) -> tuple[RewardModel, object, float]:
+    """Reload model + policy after promotion so drift scoring uses an aligned stack."""
+    deployed_model, deployed_policy, _manifest, baseline_dr = load_deployed_stack(
+        settings=settings, events=events
     )
-    manifest = read_deployed_manifest(settings.deployed_model_manifest)
-    if manifest is not None:
-        baseline_dr = manifest.dr_value
     return deployed_model, deployed_policy, baseline_dr
 
 
@@ -311,9 +304,8 @@ def run_drift_demo(
                 )
             if outcome.promoted and outcome.candidate_model_dir is not None:
                 deployed_model, deployed_policy, baseline_dr = _load_promoted_stack(
-                    candidate_model_dir=outcome.candidate_model_dir,
                     settings=settings,
-                    baseline_dr=baseline_dr,
+                    events=events_cumulative,
                 )
                 report.promoted = True
                 promote_shift = k

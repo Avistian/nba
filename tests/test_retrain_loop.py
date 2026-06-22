@@ -20,10 +20,12 @@ import numpy as np
 import pytest
 
 from nba.bandits.epsilon_greedy import EpsilonGreedy
+from nba.bandits.thompson import BootstrapEnsemble, ThompsonSampling
 from nba.config import Settings
 from nba.data.simulator import generate_logs
+from nba.ethics import EthicalPolicy
 from nba.monitoring import retrain as retrain_module
-from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed, _time_decay_weights
+from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed, load_deployed_stack, _time_decay_weights
 from nba.monitoring.signals import rolling_dr_drop
 from nba.monitoring.store_reader import read_deployed_manifest, read_retrain_audit, as_utc
 from nba.ope.estimators import LoggedBatch, OPEResult, dr, eval_action_matrix, q_matrix
@@ -739,3 +741,123 @@ def test_drift_report_jsonl_appended(tmp_path: Path) -> None:
         payload = json.loads(line)
         assert "signals" in payload
         assert "timestamp" in payload
+
+
+def test_load_deployed_stack_rebuilds_thompson_from_saved_ensemble(tmp_path: Path) -> None:
+    """Manifest policy_family=thompson must not fall back to epsilon_greedy."""
+    settings = _settings(tmp_path)
+    settings.ensure_dirs()
+    events = generate_logs(1200, settings=settings, seed=11)
+    model = RewardModel.fit(events, settings=settings)
+    model_dir = settings.model_dir / "thompson"
+    model.save(model_dir)
+    ensemble = BootstrapEnsemble.fit(events, settings=settings, n_models=4)
+    ensemble.save(model_dir)
+
+    retrain_module._write_deployed_manifest(
+        settings=settings,
+        model_dir=model_dir,
+        dr_value=0.2,
+        dr_lb=0.18,
+        baseline_value=0.2,
+        policy_family="thompson",
+    )
+
+    loaded_model, policy, manifest, deployed_dr = load_deployed_stack(
+        settings=settings, events=events
+    )
+
+    assert loaded_model is not None
+    assert isinstance(policy, ThompsonSampling)
+    assert manifest.policy_family == "thompson"
+    assert deployed_dr == pytest.approx(0.2)
+
+
+def test_load_deployed_stack_wraps_ethical_policy_when_manifest_requests(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    settings.ensure_dirs()
+    events = generate_logs(600, settings=settings, seed=13)
+    model = RewardModel.fit(events, settings=settings)
+    model_dir = settings.model_dir / "ethical"
+    model.save(model_dir)
+    retrain_module._write_deployed_manifest(
+        settings=settings,
+        model_dir=model_dir,
+        dr_value=0.1,
+        dr_lb=0.08,
+        baseline_value=0.1,
+        policy_family="epsilon_greedy",
+        ethical_wrapper=True,
+    )
+
+    _model, policy, manifest, _deployed_dr = load_deployed_stack(settings=settings, events=events)
+
+    assert isinstance(policy, EthicalPolicy)
+    assert isinstance(policy._inner, EpsilonGreedy)
+    assert manifest.ethical_wrapper is True
+
+
+def test_load_deployed_stack_legacy_manifest_defaults_to_epsilon_greedy(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    settings.ensure_dirs()
+    events = generate_logs(400, settings=settings, seed=17)
+    model = RewardModel.fit(events, settings=settings)
+    model.save(settings.model_dir)
+    settings.deployed_model_manifest.write_text(
+        json.dumps(
+            {
+                "model_dir": str(settings.model_dir),
+                "promoted_at": datetime.now(UTC).isoformat(),
+                "dr_value": 0.05,
+                "dr_lower_bound": 0.04,
+                "baseline_value": 0.05,
+                "feature_names": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _model, policy, manifest, _deployed_dr = load_deployed_stack(settings=settings, events=events)
+
+    assert isinstance(policy, EpsilonGreedy)
+    assert manifest.policy_family == "epsilon_greedy"
+    assert manifest.ethical_wrapper is False
+
+
+def test_load_deployed_stack_thompson_differs_from_epsilon_pi_e(tmp_path: Path) -> None:
+    """Rebuilding thompson as epsilon_greedy skews pi_e and rolling_dr_drop."""
+    settings = _settings(tmp_path)
+    events = generate_logs(1500, settings=settings, seed=19)
+    model = RewardModel.fit(events, settings=settings)
+    model_dir = settings.model_dir / "thompson"
+    model.save(model_dir)
+    ensemble = BootstrapEnsemble.fit(events, settings=settings, n_models=4)
+    ensemble.save(model_dir)
+    retrain_module._write_deployed_manifest(
+        settings=settings,
+        model_dir=model_dir,
+        dr_value=0.12,
+        dr_lb=0.10,
+        baseline_value=0.12,
+        policy_family="thompson",
+    )
+
+    _model, thompson_policy, _manifest, deployed_dr = load_deployed_stack(
+        settings=settings, events=events
+    )
+    epsilon_policy = EpsilonGreedy(
+        model, epsilon=settings.epsilon, rng=np.random.default_rng(settings.seed)
+    )
+    recent = LoggedBatch.from_events(events[-200:])
+
+    thompson_drop = rolling_dr_drop(
+        model, thompson_policy, recent, deployed_dr=deployed_dr, settings=settings
+    ).value
+    epsilon_drop = rolling_dr_drop(
+        model, epsilon_policy, recent, deployed_dr=deployed_dr, settings=settings
+    ).value
+
+    pi_thompson = eval_action_matrix(thompson_policy, recent.contexts)
+    pi_epsilon = eval_action_matrix(epsilon_policy, recent.contexts)
+    assert not np.allclose(pi_thompson, pi_epsilon)
+    assert thompson_drop != pytest.approx(epsilon_drop)

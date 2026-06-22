@@ -77,6 +77,8 @@ class DeployedManifest:
     dr_lower_bound: float
     baseline_value: float
     feature_names: list[str]
+    policy_family: str = "epsilon_greedy"
+    ethical_wrapper: bool = False
 
     @classmethod
     def from_json(cls, data: dict[str, object]) -> DeployedManifest:
@@ -88,6 +90,8 @@ class DeployedManifest:
             dr_lower_bound=float(data["dr_lower_bound"]),  # type: ignore[arg-type]
             baseline_value=float(data["baseline_value"]),  # type: ignore[arg-type]
             feature_names=list(data.get("feature_names", [])),  # type: ignore[arg-type]
+            policy_family=str(data.get("policy_family", "epsilon_greedy")),
+            ethical_wrapper=bool(data.get("ethical_wrapper", False)),
         )
 
 
