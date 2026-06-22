@@ -12,7 +12,7 @@ Plus: append-only audit, atomic manifest write, candidate-persisted model loads.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -316,6 +316,56 @@ def test_gate_uses_recent_holdout_not_candidate_training_rows(
     assert gate_context_ids
     assert gate_context_ids.issubset(recent_context_ids)
     assert train_context_ids.isdisjoint(gate_context_ids)
+
+
+def test_scheduled_trigger_uses_events_since_promote_not_recent_window(tmp_path: Path) -> None:
+    """Scheduled retrain must count labeled events since promote, not the capped recent window."""
+    settings = _settings(tmp_path)
+    settings = settings.model_copy(
+        update={
+            "monitor_recent_window": 400,
+            "retrain_min_new_events": 50,
+            "retrain_max_age_days": 1,
+            "drift_reward_psi_threshold": 999.0,
+            "drift_calibration_delta_threshold": 999.0,
+            "drift_calibration_absolute_max": 999.0,
+            "drift_feature_psi_threshold": 999.0,
+            "drift_rolling_dr_drop_threshold": 999.0,
+        }
+    )
+    events, deployed, policy, baseline_dr = _bootstrap(tmp_path, settings, seed=17)
+
+    now = datetime.now(UTC)
+    promoted_at = now - timedelta(days=5)
+    for i, event in enumerate(events):
+        ts = promoted_at - timedelta(hours=1) if i < len(events) - 10 else promoted_at + timedelta(hours=1)
+        events[i] = event.model_copy(update={"timestamp": ts})
+
+    settings.deployed_model_manifest.write_text(
+        json.dumps(
+            {
+                "model_dir": str(settings.model_dir),
+                "promoted_at": promoted_at.isoformat(),
+                "dr_value": baseline_dr,
+                "dr_lower_bound": baseline_dr,
+                "baseline_value": baseline_dr,
+                "feature_names": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loop = RetrainLoop(settings=settings, gate=PromotionGate(z=1.96, min_lift=5.0))
+    outcome = loop.run(
+        deployed_model=deployed,
+        deployed_policy=policy,
+        events=events,
+        deployed_dr=baseline_dr,
+        now=now,
+    )
+
+    assert not outcome.trigger.should_retrain
+    assert "scheduled_max_age" not in outcome.trigger.reasons
 
 
 def test_drift_report_jsonl_appended(tmp_path: Path) -> None:
