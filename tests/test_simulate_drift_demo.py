@@ -12,10 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from simulate_drift_demo import (  # noqa: E402
     _DEFAULT_PRODUCTION_DB_PATH,
-    _DEFAULT_PRODUCTION_DEPLOYED_MANIFEST,
-    _DEFAULT_PRODUCTION_MODEL_DIR,
-    _DEFAULT_PRODUCTION_MONITORING_REPORT,
-    _DEFAULT_PRODUCTION_RETRAIN_AUDIT,
     _DRIFT_DEMO_DB_PATH,
     _DRIFT_DEMO_DEPLOYED_MANIFEST,
     _DRIFT_DEMO_MODEL_DIR,
@@ -25,17 +21,27 @@ from simulate_drift_demo import (  # noqa: E402
     _demo_settings,
     _load_promoted_stack,
     _persist_events,
+    _score_drift,
     run_drift_demo,
 )
 
 from nba.api.store import EventStore  # noqa: E402
-from nba.monitoring.retrain import RetrainLoop, RetrainOutcome  # noqa: E402
-from nba.monitoring.triggers import RetrainTrigger  # noqa: E402
 from nba.bandits.epsilon_greedy import EpsilonGreedy  # noqa: E402
 from nba.config import Settings  # noqa: E402
 from nba.data.simulator import generate_logs  # noqa: E402
-from nba.monitoring.retrain import _write_deployed_manifest  # noqa: E402
-from nba.monitoring.signals import rolling_dr_drop  # noqa: E402
+from nba.monitoring.retrain import (  # noqa: E402
+    RetrainLoop,
+    RetrainOutcome,
+    _write_deployed_manifest,  # noqa: E402
+    bootstrap_deployed,
+)
+from nba.monitoring.signals import (  # noqa: E402
+    DriftReportContext,
+    build_drift_report,
+    rolling_dr_drop,
+)
+from nba.monitoring.store_reader import read_deployed_manifest  # noqa: E402
+from nba.monitoring.triggers import RetrainTrigger  # noqa: E402
 from nba.ope.estimators import LoggedBatch  # noqa: E402
 from nba.reward.model import RewardModel  # noqa: E402
 
@@ -247,9 +253,7 @@ def test_no_post_retrain_shifts_when_retrain_holds(
     def _hold_run(self, **kwargs) -> RetrainOutcome:
         return RetrainOutcome(
             promoted=False,
-            trigger=RetrainTrigger(
-                should_retrain=True, reasons=("reward_psi",), overlap_ok=True
-            ),
+            trigger=RetrainTrigger(should_retrain=True, reasons=("reward_psi",), overlap_ok=True),
             candidate_metrics={},
             gate_reason="HOLD: DR below gate",
             candidate_model_dir=None,
@@ -271,6 +275,91 @@ def test_no_post_retrain_shifts_when_retrain_holds(
     assert len(report.shift_records) == 2
     assert all(s.phase == "frozen" for s in report.shift_records)
     assert "post_retrain" not in [s.phase for s in report.shift_records]
+
+
+def test_frozen_shift_signals_match_retrain_loop_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Charted drift signals must use the same windows as RetrainLoop.run."""
+    captured_reports: list = []
+
+    original_run = RetrainLoop.run
+
+    def _capture_run(self, **kwargs):
+        outcome = original_run(self, **kwargs)
+        captured_reports.append(outcome.report)
+        return outcome
+
+    monkeypatch.setattr(RetrainLoop, "run", _capture_run)
+
+    settings = _settings(tmp_path).model_copy(
+        update={
+            "monitor_reference_window": 200,
+            "monitor_recent_window": 80,
+        }
+    )
+    report = run_drift_demo(
+        n_pre=400,
+        n_post=120,
+        shifts=3,
+        seed=3,
+        settings=settings,
+        report_path=None,
+    )
+
+    frozen_records = [s for s in report.shift_records if s.phase == "frozen"]
+    assert len(captured_reports) == len(frozen_records)
+
+    for rec, drift_report in zip(frozen_records, captured_reports, strict=True):
+        assert drift_report is not None
+        expected = {s.name: s.value for s in drift_report.signals}
+        assert rec.signals == expected
+        assert rec.overlap_ok == drift_report.overlap_ok
+
+
+def test_score_drift_uses_split_windows_not_fixed_shift_slice(tmp_path: Path) -> None:
+    """_score_drift must honor monitor windows, not a single shift as recent."""
+    settings = _settings(tmp_path).model_copy(
+        update={
+            "monitor_reference_window": 120,
+            "monitor_recent_window": 50,
+        }
+    )
+    settings.ensure_dirs()
+    pre_events = generate_logs(300, settings=settings, seed=1)
+    deployed_model, deployed_policy, _manifest, baseline_dr = bootstrap_deployed(
+        settings=settings, events=pre_events
+    )
+    manifest = read_deployed_manifest(settings.deployed_model_manifest)
+    assert manifest is not None
+
+    post_chunk = generate_logs(80, settings=settings, seed=2)
+    cumulative = list(pre_events) + list(post_chunk)
+
+    aligned_signals, _ = _score_drift(
+        model=deployed_model,
+        policy=deployed_policy,
+        events=cumulative,
+        settings=settings,
+        deployed_dr=baseline_dr,
+        promoted_at=manifest.promoted_at,
+    )
+
+    legacy_ref = pre_events[-settings.monitor_reference_window :]
+    legacy_recent = post_chunk
+    legacy_report = build_drift_report(
+        ctx=DriftReportContext(
+            model=deployed_model,
+            policy=deployed_policy,
+            reference=LoggedBatch.from_events(legacy_ref),
+            recent=LoggedBatch.from_events(legacy_recent),
+            deployed_dr=baseline_dr,
+        ),
+        settings=settings,
+    )
+    legacy_signals = {s.name: s.value for s in legacy_report.signals}
+
+    assert aligned_signals != legacy_signals
 
 
 def test_run_drift_demo_uses_isolated_artifact_tree(

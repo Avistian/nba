@@ -73,6 +73,10 @@ Do not cap `recent_n` at `len(labeled) // 2` — that shrinks drift, overlap, an
 whenever total labeled count is below twice the configured window. Reserve at least one row
 for reference via `min(monitor_recent_window, len(labeled) - 1)` instead.
 
+`scripts/simulate_drift_demo.py` charted `shift_records` signals must use the same
+`_split_windows` contract (or the `RetrainLoop.run` report directly) — not a fixed pre-drift
+reference tail plus a single shift as recent.
+
 ## Phase 18 monitor cadence
 
 `monitor_interval_events` gates `run_monitor.py` / `run_retrain_loop.py`: count labeled rows

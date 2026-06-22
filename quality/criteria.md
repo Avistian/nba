@@ -22,7 +22,7 @@ and add categories as the project evolves.
 
 **Source:** Makefile `check` target, project convention
 
-**Last triggered:** 2026-06-12 (Phase 8 completion)
+**Last triggered:** 2026-06-22 (drift demo shift_records aligned with RetrainLoop windows)
 
 ---
 

@@ -35,7 +35,11 @@ from nba.config import Settings  # noqa: E402
 from nba.data.drift import DriftSpec, generate_logs_with_drift  # noqa: E402
 from nba.data.simulator import generate_logs  # noqa: E402
 from nba.eval.oracle import oracle_for  # noqa: E402
-from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed  # noqa: E402
+from nba.monitoring.retrain import (  # noqa: E402
+    RetrainLoop,
+    _split_windows,
+    bootstrap_deployed,
+)
 from nba.monitoring.signals import (  # noqa: E402
     DriftReportContext,
     append_report,
@@ -187,8 +191,19 @@ def _load_promoted_stack(
     return deployed_model, deployed_policy, baseline_dr
 
 
-def _score_drift(*, model, policy, reference_events, recent_events, settings, deployed_dr):
-    """Build a one-shot DriftReport, append to JSONL, return (signals_dict, overlap_ok)."""
+def _score_drift(
+    *,
+    model,
+    policy,
+    events,
+    settings,
+    deployed_dr,
+    promoted_at=None,
+):
+    """Score drift with the same reference/recent windows as ``RetrainLoop.run``."""
+    reference_events, recent_events = _split_windows(
+        events, settings=settings, promoted_at=promoted_at
+    )
     ref = LoggedBatch.from_events(reference_events)
     recent = LoggedBatch.from_events(recent_events)
     report = build_drift_report(
@@ -263,21 +278,57 @@ def run_drift_demo(
     post_shifts = [post_events_all[i * per_shift : (i + 1) * per_shift] for i in range(shifts)]
 
     # 3. Serve K shifts with the frozen deployed model; monitor after each.
-    reference_events = pre_events[-settings.monitor_reference_window :]
     gate = PromotionGate(z=settings.ope_z, min_lift=settings.ope_min_lift)
     loop = RetrainLoop(settings=settings, gate=gate)
     promote_shift: int | None = None
 
     for k in range(shifts):
         shift_events = post_shifts[k]
-        signals, overlap_ok = _score_drift(
-            model=deployed_model,
-            policy=deployed_policy,
-            reference_events=reference_events,
-            recent_events=shift_events,
-            settings=settings,
-            deployed_dr=baseline_dr,
-        )
+        events_cumulative = list(pre_events) + [e for s in post_shifts[: k + 1] for e in s]
+
+        # Conditional retrain: RetrainLoop evaluates drift triggers each shift.
+        if not report.promoted:
+            outcome = loop.run(
+                deployed_model=deployed_model,
+                deployed_policy=deployed_policy,
+                events=events_cumulative,
+                deployed_dr=baseline_dr,
+            )
+            drift_report = outcome.report
+            if drift_report is not None:
+                signals = {s.name: s.value for s in drift_report.signals}
+                overlap_ok = drift_report.overlap_ok
+            else:
+                manifest = read_deployed_manifest(settings.deployed_model_manifest)
+                promoted_at = manifest.promoted_at if manifest else None
+                signals, overlap_ok = _score_drift(
+                    model=deployed_model,
+                    policy=deployed_policy,
+                    events=events_cumulative,
+                    settings=settings,
+                    deployed_dr=baseline_dr,
+                    promoted_at=promoted_at,
+                )
+            if outcome.promoted and outcome.candidate_model_dir is not None:
+                deployed_model, deployed_policy, baseline_dr = _load_promoted_stack(
+                    candidate_model_dir=outcome.candidate_model_dir,
+                    settings=settings,
+                    baseline_dr=baseline_dr,
+                )
+                report.promoted = True
+                promote_shift = k
+        else:
+            manifest = read_deployed_manifest(settings.deployed_model_manifest)
+            promoted_at = manifest.promoted_at if manifest else None
+            signals, overlap_ok = _score_drift(
+                model=deployed_model,
+                policy=deployed_policy,
+                events=events_cumulative,
+                settings=settings,
+                deployed_dr=baseline_dr,
+                promoted_at=promoted_at,
+            )
+
         calib = _calib_mae(deployed_model, shift_events)
         regret = _mean_regret(shift_events, oracle)
         mean_reward = float(np.mean([e.reward for e in shift_events if e.reward is not None]))
@@ -294,26 +345,6 @@ def run_drift_demo(
             )
         )
 
-        # Conditional retrain: RetrainLoop evaluates drift triggers each shift.
-        if not report.promoted:
-            events_for_retrain = list(pre_events) + [
-                e for s in post_shifts[: k + 1] for e in s
-            ]
-            outcome = loop.run(
-                deployed_model=deployed_model,
-                deployed_policy=deployed_policy,
-                events=events_for_retrain,
-                deployed_dr=baseline_dr,
-            )
-            if outcome.promoted and outcome.candidate_model_dir is not None:
-                deployed_model, deployed_policy, baseline_dr = _load_promoted_stack(
-                    candidate_model_dir=outcome.candidate_model_dir,
-                    settings=settings,
-                    baseline_dr=baseline_dr,
-                )
-                report.promoted = True
-                promote_shift = k
-
     # 4. Serve K more shifts only after a successful promote (not on HOLD / no trigger).
     more_post: list = []
     if report.promoted:
@@ -321,14 +352,18 @@ def run_drift_demo(
             n_post * shifts, settings=settings, seed=seed + 200, spec=spec
         )
         more_shifts = [more_post[i * per_shift : (i + 1) * per_shift] for i in range(shifts)]
+        frozen_events = list(pre_events) + list(post_events_all)
+        manifest = read_deployed_manifest(settings.deployed_model_manifest)
+        promoted_at = manifest.promoted_at if manifest else None
         for k, shift_events in enumerate(more_shifts):
+            events_cumulative = frozen_events + [e for s in more_shifts[: k + 1] for e in s]
             signals, overlap_ok = _score_drift(
                 model=deployed_model,
                 policy=deployed_policy,
-                reference_events=reference_events,
-                recent_events=shift_events,
+                events=events_cumulative,
                 settings=settings,
                 deployed_dr=baseline_dr,
+                promoted_at=promoted_at,
             )
             calib = _calib_mae(deployed_model, shift_events)
             regret = _mean_regret(shift_events, oracle)
