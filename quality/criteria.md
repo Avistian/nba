@@ -90,10 +90,12 @@ and add categories as the project evolves.
 - [ ] Every `recommend` path logs `propensity > 0`
 - [ ] Policy `action_dist` has full support (all arms > 0); `validate_dist` used
 - [ ] `LoggedBatch` / store tests still pass for overlap invariants
+- [ ] Retrain `_candidate_policy` matches deployed `policy_family` (and ethics wrapper) so gate
+      compares like-for-like `pi_e`
 
 **Source:** knowledge/bandits-ope/rules.md R1–R3
 
-**Last triggered:** never
+**Last triggered:** 2026-06-22 (candidate always epsilon_greedy vs UCB/Thompson deployed)
 
 ---
 

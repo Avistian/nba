@@ -54,6 +54,11 @@ the baseline until the first promotion refreshed it.
 Legacy manifests without these fields default to `epsilon_greedy` with no ethics wrapper.
 Thompson reloads a persisted `ensemble.json` under `model_dir` when present.
 
+Retrain promotion gate `_candidate_policy` must rebuild the candidate with the same family as
+the deployed policy (including `EthicalPolicy` wrapper). Using `epsilon_greedy` for every
+candidate skewed `pi_e` and produced apples-to-oranges promote/hold decisions when production
+ran UCB or Thompson sampling.
+
 `deployed.json` `promoted_at` may be timezone-naive (legacy manifests). Normalize via
 `store_reader.as_utc` before subtracting from aware `now` — otherwise `days_since_promote` and
 `nba_deployed_model_age_days` raise `TypeError` and halt scheduled retrain evaluation.
