@@ -430,21 +430,27 @@ def _gate_baseline_value(
 
 
 def _candidate_policy(
-    candidate: RewardModel, *, deployed_policy: Policy, settings: Settings
+    candidate: RewardModel,
+    *,
+    deployed_policy: Policy,
+    settings: Settings,
+    train_events: list[BanditEvent],
 ) -> Policy:
     """Build the candidate policy matching the deployed policy's family."""
-    # If deployed is ThompsonSampling (or wraps one), refresh the ensemble.
-    inner = getattr(deployed_policy, "_inner", deployed_policy)
-    if isinstance(inner, ThompsonSampling):
-        # Refit ensemble on the same train events the candidate was fit on.
-        # We can't recover the train events here, so we fall back to EpsilonGreedy
-        # over the candidate — the gate still measures value off-policy.
-        return EpsilonGreedy(
-            candidate, epsilon=settings.epsilon, rng=np.random.default_rng(settings.seed)
-        )
-    return EpsilonGreedy(
-        candidate, epsilon=settings.epsilon, rng=np.random.default_rng(settings.seed)
+    rng = np.random.default_rng(settings.seed)
+    inner = _build_policy(
+        candidate,
+        policy_family=_policy_family(deployed_policy),
+        settings=settings,
+        rng=rng,
+        model_dir=None,
+        events=train_events,
     )
+    if _is_ethical_policy(deployed_policy):
+        from nba.ethics import EthicalPolicy  # noqa: PLC0415
+
+        return EthicalPolicy(inner, settings, rng=rng)
+    return inner
 
 
 class RetrainLoop:
@@ -527,7 +533,10 @@ class RetrainLoop:
         weights = _time_decay_weights(train_events, settings=settings, now=now)
         candidate = _fit_candidate(train_events, settings=settings, weights=weights)
         candidate_policy = _candidate_policy(
-            candidate, deployed_policy=deployed_policy, settings=settings
+            candidate,
+            deployed_policy=deployed_policy,
+            settings=settings,
+            train_events=train_events,
         )
 
         # Gate on the held-out tail of the recent window.

@@ -21,11 +21,18 @@ import pytest
 
 from nba.bandits.epsilon_greedy import EpsilonGreedy
 from nba.bandits.thompson import BootstrapEnsemble, ThompsonSampling
+from nba.bandits.ucb import UCB
 from nba.config import Settings
 from nba.data.simulator import generate_logs
 from nba.ethics import EthicalPolicy
 from nba.monitoring import retrain as retrain_module
-from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed, load_deployed_stack, _time_decay_weights
+from nba.monitoring.retrain import (
+    RetrainLoop,
+    bootstrap_deployed,
+    load_deployed_stack,
+    _candidate_policy,
+    _time_decay_weights,
+)
 from nba.monitoring.signals import rolling_dr_drop
 from nba.monitoring.store_reader import read_deployed_manifest, read_retrain_audit, as_utc
 from nba.ope.estimators import LoggedBatch, OPEResult, dr, eval_action_matrix, q_matrix
@@ -822,6 +829,138 @@ def test_load_deployed_stack_legacy_manifest_defaults_to_epsilon_greedy(tmp_path
     assert isinstance(policy, EpsilonGreedy)
     assert manifest.policy_family == "epsilon_greedy"
     assert manifest.ethical_wrapper is False
+
+
+def test_candidate_policy_matches_deployed_ucb_family(tmp_path: Path) -> None:
+    """Promotion gate must evaluate UCB vs UCB, not epsilon_greedy."""
+    settings = _settings(tmp_path)
+    events = generate_logs(800, settings=settings, seed=21)
+    train = events[:600]
+    candidate = RewardModel.fit(train, settings=settings)
+    deployed = RewardModel.fit(train, settings=settings)
+    deployed_policy = UCB(
+        deployed, c=settings.ucb_c, temp=settings.softmax_temp, rng=np.random.default_rng(3)
+    )
+
+    policy = _candidate_policy(
+        candidate,
+        deployed_policy=deployed_policy,
+        settings=settings,
+        train_events=train,
+    )
+
+    assert isinstance(policy, UCB)
+    assert not isinstance(policy, EpsilonGreedy)
+
+
+def test_candidate_policy_matches_deployed_thompson_family(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    events = generate_logs(800, settings=settings, seed=22)
+    train = events[:600]
+    candidate = RewardModel.fit(train, settings=settings)
+    ensemble = BootstrapEnsemble.fit(train, settings=settings, n_models=3)
+    deployed_policy = ThompsonSampling(ensemble, rng=np.random.default_rng(4))
+
+    policy = _candidate_policy(
+        candidate,
+        deployed_policy=deployed_policy,
+        settings=settings,
+        train_events=train,
+    )
+
+    assert isinstance(policy, ThompsonSampling)
+    assert not isinstance(policy, EpsilonGreedy)
+
+
+def test_candidate_policy_wraps_ethical_policy_when_deployed_does(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    events = generate_logs(600, settings=settings, seed=23)
+    train = events[:400]
+    candidate = RewardModel.fit(train, settings=settings)
+    inner = UCB(
+        candidate, c=settings.ucb_c, temp=settings.softmax_temp, rng=np.random.default_rng(5)
+    )
+    deployed_policy = EthicalPolicy(inner, settings, rng=np.random.default_rng(6))
+
+    policy = _candidate_policy(
+        candidate,
+        deployed_policy=deployed_policy,
+        settings=settings,
+        train_events=train,
+    )
+
+    assert isinstance(policy, EthicalPolicy)
+    assert isinstance(policy._inner, UCB)
+
+
+def test_retrain_gate_uses_matching_policy_family_not_epsilon_greedy(
+    tmp_path: Path,
+) -> None:
+    """When deployed is UCB, the promotion gate must not receive epsilon_greedy."""
+    settings = _settings(tmp_path).model_copy(
+        update={
+            "drift_reward_psi_threshold": 0.0,
+            "drift_calibration_delta_threshold": -1.0,
+        }
+    )
+    events = generate_logs(2000, settings=settings, seed=24)
+    train = events[:1500]
+    deployed = RewardModel.fit(train, settings=settings)
+    deployed_policy = UCB(
+        deployed, c=settings.ucb_c, temp=settings.softmax_temp, rng=np.random.default_rng(7)
+    )
+    baseline_dr = 0.1
+    settings.deployed_model_manifest.parent.mkdir(parents=True, exist_ok=True)
+    settings.deployed_model_manifest.write_text(
+        json.dumps(
+            {
+                "model_dir": str(settings.model_dir),
+                "promoted_at": (min(e.timestamp for e in events) - timedelta(hours=1)).isoformat(),
+                "dr_value": baseline_dr,
+                "dr_lower_bound": baseline_dr,
+                "baseline_value": baseline_dr,
+                "feature_names": [],
+                "policy_family": "ucb",
+            }
+        ),
+        encoding="utf-8",
+    )
+    deployed.save(settings.model_dir)
+
+    captured: dict[str, type] = {}
+
+    class _CapturingGate(PromotionGate):
+        def evaluate(
+            self,
+            candidate: Any,
+            batch: LoggedBatch,
+            q_hat: np.ndarray,
+            *,
+            baseline_value: float,
+            clip: float | None = None,
+            rng: np.random.Generator | None = None,
+        ) -> GateDecision:
+            captured["candidate_type"] = type(candidate)
+            return super().evaluate(
+                candidate,
+                batch,
+                q_hat,
+                baseline_value=baseline_value,
+                clip=clip,
+                rng=rng,
+            )
+
+    loop = RetrainLoop(settings=settings, gate=_CapturingGate(z=1.96, min_lift=5.0))
+    outcome = loop.run(
+        deployed_model=deployed,
+        deployed_policy=deployed_policy,
+        events=events,
+        deployed_dr=baseline_dr,
+    )
+
+    assert outcome.trigger.should_retrain
+    assert captured["candidate_type"] is UCB
+    assert captured["candidate_type"] is not EpsilonGreedy
 
 
 def test_load_deployed_stack_thompson_differs_from_epsilon_pi_e(tmp_path: Path) -> None:
