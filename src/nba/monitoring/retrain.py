@@ -47,7 +47,7 @@ from nba.monitoring.signals import (
 )
 from nba.monitoring.store_reader import AuditRow, DeployedManifest
 from nba.monitoring.triggers import RetrainTrigger, evaluate_triggers
-from nba.ope.estimators import LoggedBatch, q_matrix
+from nba.ope.estimators import LoggedBatch, dr, eval_action_matrix, q_matrix
 from nba.ope.gate import PromotionGate
 from nba.reward.model import RewardModel
 from nba.schema import BanditEvent
@@ -229,8 +229,9 @@ def _bootstrap_deployed(
 ) -> tuple[RewardModel, Policy, DeployedManifest | None, float]:
     """When no ``deployed.json`` exists, fit a baseline model and write the manifest.
 
-    Returns (model, policy, manifest_or_None, deployed_dr_or_None). The baseline DR
-    is the on-policy mean reward of the reference slice — same convention as the demo.
+    Returns (model, policy, manifest, deployed_dr). ``deployed_dr`` is the off-policy
+    DR estimate of the bootstrapped policy on the reference slice — the same metric
+    :func:`~nba.monitoring.signals.rolling_dr_drop` compares against on the recent window.
     """
     labeled = _labeled(events)
     if not labeled:
@@ -240,23 +241,28 @@ def _bootstrap_deployed(
         model, epsilon=settings.epsilon, rng=np.random.default_rng(settings.seed)
     )
     ref_events = labeled[-settings.monitor_reference_window :]
-    baseline_dr = float(np.mean([e.reward for e in ref_events if e.reward is not None]))
+    ref_batch = LoggedBatch.from_events(ref_events)
+    q_hat = q_matrix(model, ref_batch.contexts)
+    pi_e = eval_action_matrix(policy, ref_batch.contexts)
+    dr_result = dr(ref_batch, q_hat, pi_e)
+    deployed_dr = float(dr_result.value)
+    deployed_dr_lb = float(dr_result.value - settings.ope_z * dr_result.std_err)
     _write_deployed_manifest(
         settings=settings,
         model_dir=settings.model_dir,
-        dr_value=baseline_dr,
-        dr_lb=baseline_dr,
-        baseline_value=baseline_dr,
+        dr_value=deployed_dr,
+        dr_lb=deployed_dr_lb,
+        baseline_value=deployed_dr,
     )
     manifest = DeployedManifest(
         model_dir=str(settings.model_dir),
         promoted_at=datetime.now(UTC),
-        dr_value=baseline_dr,
-        dr_lower_bound=baseline_dr,
-        baseline_value=baseline_dr,
+        dr_value=deployed_dr,
+        dr_lower_bound=deployed_dr_lb,
+        baseline_value=deployed_dr,
         feature_names=[],
     )
-    return model, policy, manifest, baseline_dr
+    return model, policy, manifest, deployed_dr
 
 
 def _append_audit(*, settings: Settings, row: AuditRow) -> None:
@@ -473,10 +479,10 @@ def bootstrap_deployed(
 
     Used by ``run_retrain_loop.py`` when no manifest exists yet (first-run path).
     """
-    model, policy, manifest, baseline_dr = _bootstrap_deployed(settings, events=events)
+    model, policy, manifest, deployed_dr = _bootstrap_deployed(settings, events=events)
     assert manifest is not None
     model.save(settings.model_dir)
-    return model, policy, manifest, baseline_dr
+    return model, policy, manifest, deployed_dr
 
 
 __all__ = [

@@ -24,8 +24,9 @@ from nba.config import Settings
 from nba.data.simulator import generate_logs
 from nba.monitoring import retrain as retrain_module
 from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed
+from nba.monitoring.signals import rolling_dr_drop
 from nba.monitoring.store_reader import read_deployed_manifest, read_retrain_audit
-from nba.ope.estimators import LoggedBatch, OPEResult
+from nba.ope.estimators import LoggedBatch, OPEResult, dr, eval_action_matrix, q_matrix
 from nba.ope.gate import GateDecision, PromotionGate
 from nba.reward.model import RewardModel
 from nba.schema import ACTIONS
@@ -148,11 +149,31 @@ def test_bootstrap_deployed_creates_manifest(tmp_path: Path) -> None:
     """bootstrap_deployed writes deployed.json and saves the model."""
     settings = _settings(tmp_path)
     events = generate_logs(2000, settings=settings, seed=11)
-    model, policy, manifest, baseline_dr = bootstrap_deployed(settings=settings, events=events)
+    model, policy, manifest, deployed_dr = bootstrap_deployed(settings=settings, events=events)
     assert manifest.model_dir == str(settings.model_dir)
-    assert manifest.dr_value == pytest.approx(baseline_dr)
+    assert manifest.dr_value == pytest.approx(deployed_dr)
     assert settings.deployed_model_manifest.exists()
     assert (settings.model_dir / "model.joblib").exists()
+
+
+def test_bootstrap_deployed_dr_value_is_ope_dr_not_mean_reward(tmp_path: Path) -> None:
+    """deployed.json dr_value must match rolling_dr_drop's DR metric, not mean reward."""
+    settings = _settings(tmp_path)
+    events = generate_logs(2000, settings=settings, seed=11)
+    model, policy, manifest, deployed_dr = bootstrap_deployed(settings=settings, events=events)
+
+    labeled = [e for e in events if e.reward is not None]
+    ref_events = labeled[-settings.monitor_reference_window :]
+    ref_batch = LoggedBatch.from_events(ref_events)
+    q_hat = q_matrix(model, ref_batch.contexts)
+    pi_e = eval_action_matrix(policy, ref_batch.contexts)
+    expected_dr = float(dr(ref_batch, q_hat, pi_e).value)
+
+    assert manifest.dr_value == pytest.approx(expected_dr)
+    assert deployed_dr == pytest.approx(expected_dr)
+    sig = rolling_dr_drop(model, policy, ref_batch, deployed_dr=manifest.dr_value, settings=settings)
+    assert sig.value == pytest.approx(0.0, abs=1e-9)
+    assert not sig.triggered
 
 
 def test_promote_when_gate_passes(tmp_path: Path) -> None:
