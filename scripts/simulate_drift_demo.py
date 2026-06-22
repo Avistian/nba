@@ -46,6 +46,21 @@ from nba.ope.estimators import LoggedBatch  # noqa: E402
 from nba.ope.gate import PromotionGate  # noqa: E402
 from nba.reward.model import RewardModel  # noqa: E402
 
+# Isolated EventStore for demo ingest — never the shared API default ``artifacts/events.db``.
+_DRIFT_DEMO_DB_PATH = Path("artifacts/drift_demo/events.db")
+_DEFAULT_PRODUCTION_DB_PATH = Path("artifacts/events.db")
+
+
+def _demo_db_path(settings: Settings) -> Path:
+    """Return a demo-safe db path, redirecting away from the shared production store."""
+    if settings.db_path.resolve() == _DEFAULT_PRODUCTION_DB_PATH.resolve():
+        return _DRIFT_DEMO_DB_PATH
+    return settings.db_path
+
+
+def _is_drift_demo_db(db_path: Path) -> bool:
+    return db_path.resolve() == _DRIFT_DEMO_DB_PATH.resolve()
+
 
 @dataclass
 class ShiftRecord:
@@ -149,10 +164,11 @@ def _persist_events(settings: Settings, events: list) -> int:
     labeled = [e for e in events if e.reward is not None and e.outcome is not None]
     if not labeled:
         return 0
-    # Fresh DB each demo run — same seed reuses decision_ids, so replace avoids duplicate rows.
-    if settings.db_path.exists():
-        settings.db_path.unlink()
-    store = EventStore(settings.db_path)
+    db_path = _demo_db_path(settings)
+    # Reset only the isolated demo store; production logs are append-only and must never be wiped.
+    if _is_drift_demo_db(db_path) and db_path.exists():
+        db_path.unlink()
+    store = EventStore(db_path)
     try:
         return store.ingest_bandit_events(labeled, policy_name="drift_demo")
     finally:
@@ -170,6 +186,7 @@ def run_drift_demo(
 ) -> DriftDemoReport:
     """Run the full drift demo narrative and write the report JSON."""
     settings = (settings or Settings()).model_copy(update={"seed": seed})
+    settings = settings.model_copy(update={"db_path": _demo_db_path(settings)})
     settings.ensure_dirs()
     np.random.default_rng(seed)
 

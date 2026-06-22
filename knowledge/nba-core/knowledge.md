@@ -35,6 +35,8 @@ OPE. **The bandit proposes, the router disposes.**
 - Corrections = new outcome rows; readers take latest by autoincrement id.
 - Full `ProspectContext` stored as JSON for faithful `load_events()` → `BanditEvent` replay.
 - `ingest_bandit_events` skips decisions and outcomes that already exist so bulk replay is idempotent.
+- `simulate_drift_demo.py` writes to `artifacts/drift_demo/events.db` by default (not the shared API
+  store at `artifacts/events.db`); only the isolated demo db is reset between runs.
 
 ## Determinism
 

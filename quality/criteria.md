@@ -142,7 +142,7 @@ and add categories as the project evolves.
 
 **Source:** knowledge/nba-core/rules.md R3, tests/test_store.py
 
-**Last triggered:** 2026-06-22 (ingest_bandit_events re-ingest duplicate outcomes)
+**Last triggered:** 2026-06-22 (drift demo must not unlink shared production EventStore)
 
 **Severity:** warning
 
