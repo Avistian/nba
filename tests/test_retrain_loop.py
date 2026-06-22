@@ -583,6 +583,37 @@ def test_reference_window_excludes_pre_promotion_events(tmp_path: Path) -> None:
     assert len(reference) < len(events) - len(recent)
 
 
+def test_split_windows_splits_post_promotion_pool_when_all_in_recent(tmp_path: Path) -> None:
+    """After promotion, post-promotion events may all sit inside the recent tail.
+
+    ``_split_windows`` must not raise when no post-promotion rows exist before the
+    recent slice; it should split the post-promotion pool into reference/recent.
+    """
+    settings = _settings(tmp_path)
+    settings = settings.model_copy(update={"monitor_recent_window": 50})
+    events = generate_logs(500, settings=settings, seed=42)
+
+    now = datetime.now(UTC)
+    promoted_at = now - timedelta(hours=1)
+    for i, event in enumerate(events):
+        ts = (
+            promoted_at - timedelta(hours=2)
+            if i < len(events) - 30
+            else promoted_at + timedelta(minutes=i)
+        )
+        events[i] = event.model_copy(update={"timestamp": ts})
+
+    reference, recent = retrain_module._split_windows(
+        events, settings=settings, promoted_at=promoted_at
+    )
+
+    assert reference
+    assert recent
+    assert all(as_utc(e.timestamp) > as_utc(promoted_at) for e in reference)
+    assert all(as_utc(e.timestamp) > as_utc(promoted_at) for e in recent)
+    assert set(id(e) for e in reference).isdisjoint(id(e) for e in recent)
+
+
 def test_scheduled_trigger_uses_events_since_promote_not_recent_window(tmp_path: Path) -> None:
     """Scheduled retrain must count labeled events since promote, not the capped recent window."""
     settings = _settings(tmp_path)

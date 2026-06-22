@@ -82,6 +82,10 @@ def _split_windows(
 
     When ``promoted_at`` is set, only events strictly after that timestamp are
     eligible for the reference slice (Phase 18: reference since last promotion).
+
+    If every post-promotion event falls inside the recent tail (common right after
+    promotion), the post-promotion pool is split into older reference and newer
+    recent slices instead of raising.
     """
     labeled = _labeled(events)
     if len(labeled) < 2:
@@ -101,13 +105,31 @@ def _split_windows(
         ref_pool = [e for e in pre_recent if as_utc(e.timestamp) > cutoff]
     else:
         ref_pool = pre_recent
+    if not ref_pool:
+        if promoted_at is None:
+            raise ValueError(
+                f"not enough labeled events for reference window "
+                f"(labeled={len(labeled)}, pre_recent={len(pre_recent)})"
+            )
+        post_promo = [e for e in labeled if as_utc(e.timestamp) > cutoff]
+        if len(post_promo) < 2:
+            raise ValueError(
+                f"not enough post-promotion labeled events for reference window "
+                f"(labeled={len(labeled)}, post_promotion={len(post_promo)}, "
+                f"promoted_at={promoted_at})"
+            )
+        recent_n_eff = min(recent_n, max(1, len(post_promo) // 2))
+        ref_n_eff = min(settings.monitor_reference_window, len(post_promo) - recent_n_eff)
+        if ref_n_eff < 1:
+            raise ValueError(
+                f"not enough post-promotion labeled events for reference window "
+                f"(labeled={len(labeled)}, post_promotion={len(post_promo)}, "
+                f"promoted_at={promoted_at})"
+            )
+        reference = post_promo[-(ref_n_eff + recent_n_eff) : -recent_n_eff]
+        recent = post_promo[-recent_n_eff:]
+        return reference, recent
     ref_n = min(settings.monitor_reference_window, max(1, len(ref_pool)))
-    if ref_n < 1 or not ref_pool:
-        raise ValueError(
-            f"not enough post-promotion labeled events for reference window "
-            f"(labeled={len(labeled)}, post_promote_before_recent={len(ref_pool)}, "
-            f"promoted_at={promoted_at})"
-        )
     reference = ref_pool[-ref_n:]
     return reference, recent
 
