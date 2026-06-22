@@ -34,6 +34,7 @@ OPE. **The bandit proposes, the router disposes.**
 - **Append-only**: no `UPDATE`/`DELETE` on decisions or outcomes.
 - Corrections = new outcome rows; readers take latest by autoincrement id.
 - Full `ProspectContext` stored as JSON for faithful `load_events()` → `BanditEvent` replay.
+- `ingest_bandit_events` skips decisions and outcomes that already exist so bulk replay is idempotent.
 
 ## Determinism
 

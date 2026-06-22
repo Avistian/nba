@@ -165,12 +165,18 @@ class EventStore:
         """Bulk-insert labeled :class:`BanditEvent`s (demo/replay path).
 
         Preserves each event's ``decision_id`` and timestamp. Skips rows without
-        outcomes. Uses ``INSERT OR IGNORE`` on decisions so re-ingesting is safe.
+        outcomes. Uses ``INSERT OR IGNORE`` on decisions and skips outcomes that
+        already exist so re-ingesting is safe.
         """
         n = 0
         with self._lock:
             for event in events:
                 if event.outcome is None or event.reward is None:
+                    continue
+                outcome_exists = self._conn.execute(
+                    "SELECT 1 FROM outcomes WHERE decision_id = ?", (event.decision_id,)
+                ).fetchone()
+                if outcome_exists is not None:
                     continue
                 self._conn.execute(
                     "INSERT OR IGNORE INTO decisions "

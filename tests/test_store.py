@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import numpy as np
 import pytest
 
 from nba.api.store import EventStore, UnknownDecisionError
 from nba.config import Settings
 from nba.data.simulator import sample_context
-from nba.schema import Action, Outcome, ProspectContext, reward_for
+from nba.schema import Action, BanditEvent, Outcome, ProspectContext, reward_for
 
 
 def _ctx(seed: int = 1) -> ProspectContext:
@@ -94,3 +96,59 @@ def test_rejects_nonpositive_propensity(settings: Settings) -> None:
         store.append_decision(
             context=_ctx(), action=Action.KNOCK_NOW, propensity=0.0, policy_name="ucb"
         )
+
+
+def _labeled_event(
+    *,
+    decision_id: str = "decision-abc",
+    outcome: Outcome = Outcome.CLOSED,
+    seed: int = 1,
+) -> BanditEvent:
+    return BanditEvent(
+        context=_ctx(seed),
+        action=Action.KNOCK_NOW,
+        propensity=0.5,
+        reward=reward_for(outcome),
+        outcome=outcome,
+        timestamp=datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC),
+        decision_id=decision_id,
+    )
+
+
+def test_ingest_bandit_events_roundtrip(settings: Settings) -> None:
+    store = EventStore(settings.db_path)
+    event = _labeled_event()
+
+    assert store.ingest_bandit_events([event]) == 1
+    assert store.decision_count() == 1
+    assert store.outcome_count() == 1
+
+    (loaded,) = store.load_events()
+    assert loaded.decision_id == event.decision_id
+    assert loaded.outcome is Outcome.CLOSED
+    assert loaded.reward == pytest.approx(reward_for(Outcome.CLOSED))
+
+
+def test_ingest_bandit_events_reingest_is_idempotent(settings: Settings) -> None:
+    store = EventStore(settings.db_path)
+    event = _labeled_event()
+
+    assert store.ingest_bandit_events([event]) == 1
+    assert store.ingest_bandit_events([event]) == 0
+
+    assert store.decision_count() == 1
+    assert store.outcome_count() == 1
+
+
+def test_ingest_bandit_events_reingest_keeps_first_outcome(settings: Settings) -> None:
+    store = EventStore(settings.db_path)
+    original = _labeled_event(outcome=Outcome.NOT_HOME)
+    revised = _labeled_event(outcome=Outcome.CLOSED)
+
+    store.ingest_bandit_events([original])
+    store.ingest_bandit_events([revised])
+
+    assert store.outcome_count() == 1
+    (loaded,) = store.load_events()
+    assert loaded.outcome is Outcome.NOT_HOME
+    assert loaded.reward == pytest.approx(reward_for(Outcome.NOT_HOME))
