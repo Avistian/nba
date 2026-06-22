@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -72,31 +72,42 @@ def _labeled(events: list[BanditEvent]) -> list[BanditEvent]:
 
 
 def _split_windows(
-    events: list[BanditEvent], *, settings: Settings
+    events: list[BanditEvent],
+    *,
+    settings: Settings,
+    promoted_at: datetime | None = None,
 ) -> tuple[list[BanditEvent], list[BanditEvent]]:
-    """Reference = the older ``monitor_reference_window`` labeled events (capped);
+    """Reference = post-promotion labeled events before the recent tail (capped);
     Recent = the last ``monitor_recent_window`` labeled events.
+
+    When ``promoted_at`` is set, only events strictly after that timestamp are
+    eligible for the reference slice (Phase 18: reference since last promotion).
     """
     labeled = _labeled(events)
     if len(labeled) < 2:
         raise ValueError("need at least 2 labeled events to score drift")
     recent_n = min(settings.monitor_recent_window, len(labeled) // 2)
-    ref_n = min(
-        settings.monitor_reference_window,
-        max(1, len(labeled) - recent_n),
-    )
-    if recent_n < 1 or ref_n < 1:
+    if recent_n < 1:
         raise ValueError(
             f"not enough labeled events for windows (labeled={len(labeled)}, "
-            f"requested recent={recent_n}, reference={ref_n})"
+            f"requested recent={recent_n})"
         )
-    # Reference = older slice; recent = newest slice.
-    reference = (
-        labeled[-(recent_n + ref_n) : -recent_n]
-        if len(labeled) > recent_n + ref_n
-        else labeled[:-recent_n]
-    )
     recent = labeled[-recent_n:]
+    recent_start = len(labeled) - recent_n
+    pre_recent = labeled[:recent_start]
+    if promoted_at is not None:
+        cutoff = as_utc(promoted_at)
+        ref_pool = [e for e in pre_recent if as_utc(e.timestamp) > cutoff]
+    else:
+        ref_pool = pre_recent
+    ref_n = min(settings.monitor_reference_window, max(1, len(ref_pool)))
+    if ref_n < 1 or not ref_pool:
+        raise ValueError(
+            f"not enough post-promotion labeled events for reference window "
+            f"(labeled={len(labeled)}, post_promote_before_recent={len(ref_pool)}, "
+            f"promoted_at={promoted_at})"
+        )
+    reference = ref_pool[-ref_n:]
     return reference, recent
 
 
@@ -237,16 +248,19 @@ def _bootstrap_deployed(
     dr_result = dr(gate_batch, q_hat, pi_e)
     deployed_dr = float(dr_result.value)
     deployed_dr_lb = float(dr_result.value - settings.ope_z * dr_result.std_err)
+    oldest_train_ts = min(as_utc(e.timestamp) for e in train_events)
+    promoted_at = oldest_train_ts - timedelta(seconds=1)
     _write_deployed_manifest(
         settings=settings,
         model_dir=settings.model_dir,
         dr_value=deployed_dr,
         dr_lb=deployed_dr_lb,
         baseline_value=deployed_dr,
+        promoted_at=promoted_at,
     )
     manifest = DeployedManifest(
         model_dir=str(settings.model_dir),
-        promoted_at=datetime.now(UTC),
+        promoted_at=promoted_at,
         dr_value=deployed_dr,
         dr_lower_bound=deployed_dr_lb,
         baseline_value=deployed_dr,
@@ -316,7 +330,11 @@ class RetrainLoop:
         settings = self._settings
         now = now or datetime.now(UTC)
 
-        reference_events, recent_events = _split_windows(events, settings=settings)
+        manifest = _read_manifest_safe(settings)
+        promoted_at = manifest.promoted_at if manifest else None
+        reference_events, recent_events = _split_windows(
+            events, settings=settings, promoted_at=promoted_at
+        )
         ref_batch = LoggedBatch.from_events(reference_events)
         recent_batch = LoggedBatch.from_events(recent_events)
 
@@ -335,7 +353,6 @@ class RetrainLoop:
         append_report(report, settings.monitoring_report_path)
 
         # Compute days_since_promote + n_new for the scheduled ceiling.
-        manifest = _read_manifest_safe(settings)
         days_since = (
             (now - as_utc(manifest.promoted_at)).total_seconds() / 86400.0 if manifest else 0.0
         )

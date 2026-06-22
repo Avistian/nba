@@ -25,7 +25,7 @@ from nba.data.simulator import generate_logs
 from nba.monitoring import retrain as retrain_module
 from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed, _time_decay_weights
 from nba.monitoring.signals import rolling_dr_drop
-from nba.monitoring.store_reader import read_deployed_manifest, read_retrain_audit
+from nba.monitoring.store_reader import read_deployed_manifest, read_retrain_audit, as_utc
 from nba.ope.estimators import LoggedBatch, OPEResult, dr, eval_action_matrix, q_matrix
 from nba.ope.gate import GateDecision, PromotionGate
 from nba.reward.model import RewardModel
@@ -64,11 +64,12 @@ def _bootstrap(
     )
     settings.deployed_model_manifest.parent.mkdir(parents=True, exist_ok=True)
     baseline_dr = float(np.mean([e.reward for e in train[-1000:] if e.reward is not None]))
+    promoted_at = min(e.timestamp for e in events) - timedelta(hours=1)
     settings.deployed_model_manifest.write_text(
         json.dumps(
             {
                 "model_dir": str(settings.model_dir),
-                "promoted_at": datetime.now(UTC).isoformat(),
+                "promoted_at": promoted_at.isoformat(),
                 "dr_value": baseline_dr,
                 "dr_lower_bound": baseline_dr,
                 "baseline_value": baseline_dr,
@@ -550,12 +551,36 @@ def test_naive_promoted_at_does_not_break_days_since_promote(tmp_path: Path) -> 
     assert outcome.report is not None
 
 
+def test_reference_window_excludes_pre_promotion_events(tmp_path: Path) -> None:
+    """Reference slice must only include labeled events after deployed.json promoted_at."""
+    settings = _settings(tmp_path)
+    events = generate_logs(2000, settings=settings, seed=23)
+
+    now = datetime.now(UTC)
+    promoted_at = now - timedelta(days=3)
+    for i, event in enumerate(events):
+        ts = (
+            promoted_at - timedelta(hours=2)
+            if i < len(events) - 600
+            else promoted_at + timedelta(hours=1)
+        )
+        events[i] = event.model_copy(update={"timestamp": ts})
+
+    reference, recent = retrain_module._split_windows(
+        events, settings=settings, promoted_at=promoted_at
+    )
+
+    assert reference
+    assert all(as_utc(e.timestamp) > as_utc(promoted_at) for e in reference)
+    assert len(reference) < len(events) - len(recent)
+
+
 def test_scheduled_trigger_uses_events_since_promote_not_recent_window(tmp_path: Path) -> None:
     """Scheduled retrain must count labeled events since promote, not the capped recent window."""
     settings = _settings(tmp_path)
     settings = settings.model_copy(
         update={
-            "monitor_recent_window": 400,
+            "monitor_recent_window": 5,
             "retrain_min_new_events": 50,
             "retrain_max_age_days": 1,
             "drift_reward_psi_threshold": 999.0,

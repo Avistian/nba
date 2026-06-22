@@ -23,7 +23,7 @@ from nba.bandits.epsilon_greedy import EpsilonGreedy  # noqa: E402
 from nba.config import Settings  # noqa: E402
 from nba.data.simulator import frame_to_events  # noqa: E402
 from nba.monitoring.cadence import count_labeled, evaluate_monitor_cadence  # noqa: E402
-from nba.monitoring.retrain import bootstrap_deployed  # noqa: E402
+from nba.monitoring.retrain import bootstrap_deployed, _split_windows  # noqa: E402
 from nba.monitoring.signals import DriftReportContext, build_drift_report  # noqa: E402
 from nba.monitoring.store_reader import read_deployed_manifest  # noqa: E402
 from nba.ope.estimators import LoggedBatch  # noqa: E402
@@ -89,15 +89,11 @@ def main() -> None:
         )
         deployed_dr = manifest.dr_value
 
-    # Split reference/recent.
-    recent_n = min(settings.monitor_recent_window, len(labeled) // 2)
-    ref_n = min(settings.monitor_reference_window, max(1, len(labeled) - recent_n))
-    reference = (
-        labeled[-(recent_n + ref_n) : -recent_n]
-        if len(labeled) > recent_n + ref_n
-        else labeled[:-recent_n]
+    # Split reference/recent (reference excludes pre-promotion events).
+    promoted_at = manifest.promoted_at if manifest is not None else None
+    reference, recent = _split_windows(
+        events, settings=settings, promoted_at=promoted_at
     )
-    recent = labeled[-recent_n:]
     ref_batch = LoggedBatch.from_events(reference)
     recent_batch = LoggedBatch.from_events(recent)
 
