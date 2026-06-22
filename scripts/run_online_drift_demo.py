@@ -254,7 +254,7 @@ def run_online_drift_demo(
     np.random.default_rng(seed)
     now = datetime.now(UTC)
     warmup_raw = generate_logs(warmup, settings=settings, seed=seed)
-    warmup_events = restamp_events(warmup_raw, now - timedelta(minutes=warmup))
+    warmup_events = restamp_events(warmup_raw, now - timedelta(seconds=warmup))
     ingest_events_incremental(settings, warmup_events, policy_name="online_drift_warmup")
 
     deployed_model, deployed_policy, _manifest, baseline_dr = bootstrap_deployed(

@@ -72,6 +72,16 @@ def test_restamp_events_advances_timestamps() -> None:
     assert stamped[0].reward == events[0].reward
 
 
+def test_warmup_restamp_uses_event_count_as_seconds() -> None:
+    """Warmup lead-in spans N seconds for N events, ending just before live ticks."""
+    now = datetime(2026, 6, 22, 15, 0, tzinfo=UTC)
+    warmup = 3000
+    events = generate_logs(warmup, settings=Settings(), seed=1)
+    stamped = restamp_events(events, now - timedelta(seconds=warmup))
+    assert stamped[0].timestamp == now - timedelta(seconds=warmup)
+    assert stamped[-1].timestamp == now - timedelta(seconds=1)
+
+
 def test_online_demo_appends_drift_report_per_tick(tmp_path: Path) -> None:
     settings = demo_settings(_settings(tmp_path))
     settings.ensure_dirs()
