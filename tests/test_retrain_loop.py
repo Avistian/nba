@@ -163,6 +163,14 @@ def test_append_only_audit(tmp_path: Path) -> None:
     assert audit[0].timestamp <= audit[1].timestamp
 
 
+def test_split_windows_recent_uses_full_monitor_window(tmp_path: Path) -> None:
+    """Recent slice must honor monitor_recent_window when enough labeled rows exist."""
+    settings = _settings(tmp_path)
+    events = generate_logs(600, settings=settings, seed=1)
+    _reference, recent = retrain_module._split_windows(events, settings=settings)
+    assert len(recent) == settings.monitor_recent_window
+
+
 def test_bootstrap_deployed_creates_manifest(tmp_path: Path) -> None:
     """bootstrap_deployed writes deployed.json and saves the model."""
     settings = _settings(tmp_path)

@@ -86,7 +86,8 @@ def _split_windows(
     labeled = _labeled(events)
     if len(labeled) < 2:
         raise ValueError("need at least 2 labeled events to score drift")
-    recent_n = min(settings.monitor_recent_window, len(labeled) // 2)
+    # Reserve at least one labeled row for reference; do not cap at len // 2.
+    recent_n = min(settings.monitor_recent_window, max(1, len(labeled) - 1))
     if recent_n < 1:
         raise ValueError(
             f"not enough labeled events for windows (labeled={len(labeled)}, "
