@@ -137,9 +137,10 @@ def _time_decay_weights(
     halflife = settings.retrain_time_decay_halflife_days
     if halflife is None:
         return None
-    now = now or datetime.now(UTC)
+    now_utc = _as_utc(now or datetime.now(UTC))
     ages = np.array(
-        [(now - e.timestamp).total_seconds() / 86400.0 for e in events], dtype=np.float64
+        [(now_utc - _as_utc(e.timestamp)).total_seconds() / 86400.0 for e in events],
+        dtype=np.float64,
     )
     ages = np.clip(ages, 0.0, None)
     return np.power(0.5, ages / halflife)

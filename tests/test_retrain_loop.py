@@ -23,7 +23,7 @@ from nba.bandits.epsilon_greedy import EpsilonGreedy
 from nba.config import Settings
 from nba.data.simulator import generate_logs
 from nba.monitoring import retrain as retrain_module
-from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed
+from nba.monitoring.retrain import RetrainLoop, bootstrap_deployed, _time_decay_weights
 from nba.monitoring.signals import rolling_dr_drop
 from nba.monitoring.store_reader import read_deployed_manifest, read_retrain_audit
 from nba.ope.estimators import LoggedBatch, OPEResult, dr, eval_action_matrix, q_matrix
@@ -78,6 +78,23 @@ def _bootstrap(
         encoding="utf-8",
     )
     return events, deployed, deployed_policy, baseline_dr
+
+
+def test_time_decay_weights_accepts_naive_event_timestamps(tmp_path: Path) -> None:
+    """Simulator/EventStore timestamps are naive UTC; decay weights must not raise."""
+    settings = _settings(tmp_path).model_copy(
+        update={"retrain_time_decay_halflife_days": 7.0}
+    )
+    events = generate_logs(50, settings=settings, seed=3)
+    assert events[0].timestamp.tzinfo is None
+
+    now = datetime.now(UTC)
+    weights = _time_decay_weights(events, settings=settings, now=now)
+
+    assert weights is not None
+    assert weights.shape == (len(events),)
+    assert np.all(weights > 0.0)
+    assert np.all(weights <= 1.0)
 
 
 def test_no_trigger_no_fit(tmp_path: Path) -> None:
