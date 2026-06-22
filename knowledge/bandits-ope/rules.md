@@ -40,3 +40,11 @@ For retraining, fit on reference plus an older recent train split, then gate on 
 recent rows. The same holdout split applies when bootstrapping the initial ``deployed.json``.
 
 *Confirmed: retrain loop regression for in-sample DR inflation, 2026-06-22.*
+
+## R7: Retrain gate baseline must be OPE DR, not on-policy mean reward
+
+When `deployed_dr` is omitted, compute the deployed policy's DR on the gate holdout batch.
+`PromotionGate` compares candidate DR lower bound to `baseline_value + min_lift`; mixing mean
+logged reward with DR breaks promote/hold decisions.
+
+*Confirmed: `test_gate_baseline_uses_deployed_dr_when_deployed_dr_omitted`, 2026-06-22.*

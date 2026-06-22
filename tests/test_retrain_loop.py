@@ -308,6 +308,64 @@ def test_hold_when_gate_fails(tmp_path: Path) -> None:
     assert audit[-1].verdict == "hold"
 
 
+def test_gate_baseline_uses_deployed_dr_when_deployed_dr_omitted(
+    tmp_path: Path,
+) -> None:
+    """When deployed_dr is omitted, gate baseline must be deployed OPE DR, not mean reward."""
+    settings = _settings(tmp_path).model_copy(
+        update={
+            "drift_reward_psi_threshold": 0.0,
+            "drift_calibration_delta_threshold": -1.0,
+        }
+    )
+    events, deployed, policy, _baseline_dr = _bootstrap(tmp_path, settings)
+
+    _reference_events, recent_events = retrain_module._split_windows(events, settings=settings)
+    _train_recent, gate_events = retrain_module._split_recent_for_training_and_gate(
+        recent_events
+    )
+    gate_batch = LoggedBatch.from_events(gate_events)
+    q_hat = q_matrix(deployed, gate_batch.contexts)
+    pi_e = eval_action_matrix(policy, gate_batch.contexts)
+    expected_deployed_dr = float(dr(gate_batch, q_hat, pi_e).value)
+    mean_reward = float(gate_batch.rewards.mean())
+
+    captured: dict[str, float] = {}
+
+    class _CapturingGate(PromotionGate):
+        def evaluate(
+            self,
+            candidate: Any,
+            batch: LoggedBatch,
+            q_hat: np.ndarray,
+            *,
+            baseline_value: float,
+            clip: float | None = None,
+            rng: np.random.Generator | None = None,
+        ) -> GateDecision:
+            captured["baseline_value"] = baseline_value
+            return super().evaluate(
+                candidate,
+                batch,
+                q_hat,
+                baseline_value=baseline_value,
+                clip=clip,
+                rng=rng,
+            )
+
+    loop = RetrainLoop(settings=settings, gate=_CapturingGate(z=1.96, min_lift=5.0))
+    outcome = loop.run(
+        deployed_model=deployed,
+        deployed_policy=policy,
+        events=events,
+        deployed_dr=None,
+    )
+
+    assert outcome.trigger.should_retrain
+    assert captured["baseline_value"] == pytest.approx(expected_deployed_dr)
+    assert captured["baseline_value"] != pytest.approx(mean_reward)
+
+
 def test_gate_uses_recent_holdout_not_candidate_training_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

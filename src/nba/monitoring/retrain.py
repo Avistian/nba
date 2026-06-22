@@ -271,6 +271,21 @@ def _append_audit(*, settings: Settings, row: AuditRow) -> None:
         fh.write(json.dumps(row.to_json()) + "\n")
 
 
+def _gate_baseline_value(
+    *,
+    deployed_dr: float | None,
+    deployed_model: RewardModel,
+    deployed_policy: Policy,
+    gate_batch: LoggedBatch,
+) -> float:
+    """Return the promotion-gate baseline in OPE DR units (same estimator as the candidate)."""
+    if deployed_dr is not None:
+        return float(deployed_dr)
+    q_hat_deployed = q_matrix(deployed_model, gate_batch.contexts)
+    pi_e_deployed = eval_action_matrix(deployed_policy, gate_batch.contexts)
+    return float(dr(gate_batch, q_hat_deployed, pi_e_deployed).value)
+
+
 def _candidate_policy(
     candidate: RewardModel, *, deployed_policy: Policy, settings: Settings
 ) -> Policy:
@@ -370,8 +385,11 @@ class RetrainLoop:
 
         # Gate on the held-out tail of the recent window.
         q_hat_candidate = q_matrix(candidate, gate_batch.contexts)
-        baseline_value = (
-            deployed_dr if deployed_dr is not None else float(gate_batch.rewards.mean())
+        baseline_value = _gate_baseline_value(
+            deployed_dr=deployed_dr,
+            deployed_model=deployed_model,
+            deployed_policy=deployed_policy,
+            gate_batch=gate_batch,
         )
         gate_decision = self._gate.evaluate(
             candidate_policy,
