@@ -46,16 +46,64 @@ from nba.ope.estimators import LoggedBatch  # noqa: E402
 from nba.ope.gate import PromotionGate  # noqa: E402
 from nba.reward.model import RewardModel  # noqa: E402
 
-# Isolated EventStore for demo ingest — never the shared API default ``artifacts/events.db``.
-_DRIFT_DEMO_DB_PATH = Path("artifacts/drift_demo/events.db")
+# Isolated artifact tree for the drift demo — never the shared production defaults.
+_DRIFT_DEMO_ROOT = Path("artifacts/drift_demo")
+_DRIFT_DEMO_DB_PATH = _DRIFT_DEMO_ROOT / "events.db"
+_DRIFT_DEMO_MODEL_DIR = _DRIFT_DEMO_ROOT / "models"
+_DRIFT_DEMO_DEPLOYED_MANIFEST = _DRIFT_DEMO_MODEL_DIR / "deployed.json"
+_DRIFT_DEMO_MONITORING_REPORT = _DRIFT_DEMO_ROOT / "monitoring" / "drift_reports.jsonl"
+_DRIFT_DEMO_RETRAIN_AUDIT = _DRIFT_DEMO_ROOT / "monitoring" / "retrain_audit.jsonl"
+
 _DEFAULT_PRODUCTION_DB_PATH = Path("artifacts/events.db")
+_DEFAULT_PRODUCTION_MODEL_DIR = Path("artifacts/models")
+_DEFAULT_PRODUCTION_DEPLOYED_MANIFEST = Path("artifacts/models/deployed.json")
+_DEFAULT_PRODUCTION_MONITORING_REPORT = Path("artifacts/monitoring/drift_reports.jsonl")
+_DEFAULT_PRODUCTION_RETRAIN_AUDIT = Path("artifacts/monitoring/retrain_audit.jsonl")
+
+
+def _redirect_production_path(value: Path, *, production: Path, demo: Path) -> Path:
+    """Return ``demo`` when ``value`` is the shared production default."""
+    if value.resolve() == production.resolve():
+        return demo
+    return value
 
 
 def _demo_db_path(settings: Settings) -> Path:
     """Return a demo-safe db path, redirecting away from the shared production store."""
-    if settings.db_path.resolve() == _DEFAULT_PRODUCTION_DB_PATH.resolve():
-        return _DRIFT_DEMO_DB_PATH
-    return settings.db_path
+    return _redirect_production_path(
+        settings.db_path,
+        production=_DEFAULT_PRODUCTION_DB_PATH,
+        demo=_DRIFT_DEMO_DB_PATH,
+    )
+
+
+def _demo_settings(settings: Settings) -> Settings:
+    """Redirect production artifact defaults to the isolated drift-demo tree."""
+    return settings.model_copy(
+        update={
+            "db_path": _demo_db_path(settings),
+            "model_dir": _redirect_production_path(
+                settings.model_dir,
+                production=_DEFAULT_PRODUCTION_MODEL_DIR,
+                demo=_DRIFT_DEMO_MODEL_DIR,
+            ),
+            "deployed_model_manifest": _redirect_production_path(
+                settings.deployed_model_manifest,
+                production=_DEFAULT_PRODUCTION_DEPLOYED_MANIFEST,
+                demo=_DRIFT_DEMO_DEPLOYED_MANIFEST,
+            ),
+            "monitoring_report_path": _redirect_production_path(
+                settings.monitoring_report_path,
+                production=_DEFAULT_PRODUCTION_MONITORING_REPORT,
+                demo=_DRIFT_DEMO_MONITORING_REPORT,
+            ),
+            "retrain_audit_path": _redirect_production_path(
+                settings.retrain_audit_path,
+                production=_DEFAULT_PRODUCTION_RETRAIN_AUDIT,
+                demo=_DRIFT_DEMO_RETRAIN_AUDIT,
+            ),
+        }
+    )
 
 
 def _is_drift_demo_db(db_path: Path) -> bool:
@@ -185,8 +233,7 @@ def run_drift_demo(
     report_path: Path | None = Path("artifacts/drift_demo_report.json"),
 ) -> DriftDemoReport:
     """Run the full drift demo narrative and write the report JSON."""
-    settings = (settings or Settings()).model_copy(update={"seed": seed})
-    settings = settings.model_copy(update={"db_path": _demo_db_path(settings)})
+    settings = _demo_settings((settings or Settings()).model_copy(update={"seed": seed}))
     settings.ensure_dirs()
     np.random.default_rng(seed)
 

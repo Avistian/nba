@@ -142,7 +142,7 @@ and add categories as the project evolves.
 
 **Source:** knowledge/nba-core/rules.md R3, tests/test_store.py
 
-**Last triggered:** 2026-06-22 (drift demo must not unlink shared production EventStore)
+**Last triggered:** 2026-06-22 (drift demo must not write to shared production artifact tree)
 
 **Severity:** warning
 

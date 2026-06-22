@@ -12,8 +12,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from simulate_drift_demo import (  # noqa: E402
     _DEFAULT_PRODUCTION_DB_PATH,
+    _DEFAULT_PRODUCTION_DEPLOYED_MANIFEST,
+    _DEFAULT_PRODUCTION_MODEL_DIR,
+    _DEFAULT_PRODUCTION_MONITORING_REPORT,
+    _DEFAULT_PRODUCTION_RETRAIN_AUDIT,
     _DRIFT_DEMO_DB_PATH,
+    _DRIFT_DEMO_DEPLOYED_MANIFEST,
+    _DRIFT_DEMO_MODEL_DIR,
+    _DRIFT_DEMO_MONITORING_REPORT,
+    _DRIFT_DEMO_RETRAIN_AUDIT,
     _demo_db_path,
+    _demo_settings,
     _load_promoted_stack,
     _persist_events,
     run_drift_demo,
@@ -95,6 +104,34 @@ def test_demo_db_path_redirects_away_from_production_default() -> None:
     settings = Settings()
     assert settings.db_path == _DEFAULT_PRODUCTION_DB_PATH
     assert _demo_db_path(settings) == _DRIFT_DEMO_DB_PATH
+
+
+def test_demo_settings_redirects_all_production_artifact_defaults() -> None:
+    """Default Settings must route every artifact path into the drift-demo tree."""
+    settings = Settings()
+    demo = _demo_settings(settings)
+    assert demo.db_path == _DRIFT_DEMO_DB_PATH
+    assert demo.model_dir == _DRIFT_DEMO_MODEL_DIR
+    assert demo.deployed_model_manifest == _DRIFT_DEMO_DEPLOYED_MANIFEST
+    assert demo.monitoring_report_path == _DRIFT_DEMO_MONITORING_REPORT
+    assert demo.retrain_audit_path == _DRIFT_DEMO_RETRAIN_AUDIT
+
+
+def test_demo_settings_respects_explicit_artifact_overrides(tmp_path: Path) -> None:
+    custom = tmp_path / "custom"
+    settings = Settings(
+        db_path=custom / "events.db",
+        model_dir=custom / "models",
+        deployed_model_manifest=custom / "models" / "deployed.json",
+        monitoring_report_path=custom / "monitoring" / "drift.jsonl",
+        retrain_audit_path=custom / "monitoring" / "audit.jsonl",
+    )
+    demo = _demo_settings(settings)
+    assert demo.db_path == custom / "events.db"
+    assert demo.model_dir == custom / "models"
+    assert demo.deployed_model_manifest == custom / "models" / "deployed.json"
+    assert demo.monitoring_report_path == custom / "monitoring" / "drift.jsonl"
+    assert demo.retrain_audit_path == custom / "monitoring" / "audit.jsonl"
 
 
 def test_demo_db_path_respects_explicit_override(tmp_path: Path) -> None:
@@ -234,6 +271,79 @@ def test_no_post_retrain_shifts_when_retrain_holds(
     assert len(report.shift_records) == 2
     assert all(s.phase == "frozen" for s in report.shift_records)
     assert "post_retrain" not in [s.phase for s in report.shift_records]
+
+
+def test_run_drift_demo_uses_isolated_artifact_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end demo writes only under the drift-demo tree, not production artifacts."""
+    prod_db = tmp_path / "artifacts" / "events.db"
+    prod_models = tmp_path / "artifacts" / "models"
+    prod_deployed = prod_models / "deployed.json"
+    prod_drift = tmp_path / "artifacts" / "monitoring" / "drift_reports.jsonl"
+    prod_audit = tmp_path / "artifacts" / "monitoring" / "retrain_audit.jsonl"
+    for path in (prod_db.parent, prod_models, prod_drift.parent):
+        path.mkdir(parents=True, exist_ok=True)
+    prod_db.write_text("live production log", encoding="utf-8")
+    prod_deployed.write_text('{"model_dir":"production"}', encoding="utf-8")
+    prod_drift.write_text('{"production": true}\n', encoding="utf-8")
+    prod_audit.write_text('{"production": true}\n', encoding="utf-8")
+
+    demo_root = tmp_path / "artifacts" / "drift_demo"
+    demo_db = demo_root / "events.db"
+    demo_models = demo_root / "models"
+    demo_deployed = demo_models / "deployed.json"
+    demo_drift = demo_root / "monitoring" / "drift_reports.jsonl"
+    demo_audit = demo_root / "monitoring" / "retrain_audit.jsonl"
+
+    import simulate_drift_demo as mod
+
+    monkeypatch.setattr(mod, "_DEFAULT_PRODUCTION_DB_PATH", prod_db)
+    monkeypatch.setattr(mod, "_DEFAULT_PRODUCTION_MODEL_DIR", prod_models)
+    monkeypatch.setattr(mod, "_DEFAULT_PRODUCTION_DEPLOYED_MANIFEST", prod_deployed)
+    monkeypatch.setattr(mod, "_DEFAULT_PRODUCTION_MONITORING_REPORT", prod_drift)
+    monkeypatch.setattr(mod, "_DEFAULT_PRODUCTION_RETRAIN_AUDIT", prod_audit)
+    monkeypatch.setattr(mod, "_DRIFT_DEMO_DB_PATH", demo_db)
+    monkeypatch.setattr(mod, "_DRIFT_DEMO_MODEL_DIR", demo_models)
+    monkeypatch.setattr(mod, "_DRIFT_DEMO_DEPLOYED_MANIFEST", demo_deployed)
+    monkeypatch.setattr(mod, "_DRIFT_DEMO_MONITORING_REPORT", demo_drift)
+    monkeypatch.setattr(mod, "_DRIFT_DEMO_RETRAIN_AUDIT", demo_audit)
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        model_dir=prod_models,
+        db_path=prod_db,
+        deployed_model_manifest=prod_deployed,
+        monitoring_report_path=prod_drift,
+        retrain_audit_path=prod_audit,
+    )
+    report = run_drift_demo(
+        n_pre=200,
+        n_post=100,
+        shifts=2,
+        seed=3,
+        settings=settings,
+        report_path=None,
+    )
+
+    assert report.shift_records
+    assert prod_db.read_text(encoding="utf-8") == "live production log"
+    assert prod_deployed.read_text(encoding="utf-8") == '{"model_dir":"production"}'
+    assert prod_drift.read_text(encoding="utf-8") == '{"production": true}\n'
+    assert prod_audit.read_text(encoding="utf-8") == '{"production": true}\n'
+
+    assert demo_db.exists()
+    assert demo_deployed.exists()
+    assert demo_drift.exists()
+    assert demo_audit.exists()
+    assert demo_drift.read_text(encoding="utf-8").strip()
+    assert demo_audit.read_text(encoding="utf-8").strip()
+
+    store = EventStore(demo_db)
+    try:
+        assert store.decision_count() > 0
+    finally:
+        store.close()
 
 
 def test_run_drift_demo_uses_isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
