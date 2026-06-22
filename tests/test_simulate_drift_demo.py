@@ -20,6 +20,8 @@ from simulate_drift_demo import (  # noqa: E402
 )
 
 from nba.api.store import EventStore  # noqa: E402
+from nba.monitoring.retrain import RetrainLoop, RetrainOutcome  # noqa: E402
+from nba.monitoring.triggers import RetrainTrigger  # noqa: E402
 from nba.bandits.epsilon_greedy import EpsilonGreedy  # noqa: E402
 from nba.config import Settings  # noqa: E402
 from nba.data.simulator import generate_logs  # noqa: E402
@@ -157,6 +159,40 @@ def test_persist_events_resets_only_demo_db(
         assert store.decision_count() == expected
     finally:
         store.close()
+
+
+def test_no_post_retrain_shifts_when_retrain_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HOLD (or no promote) must not label later shifts as post_retrain."""
+
+    def _hold_run(self, **kwargs) -> RetrainOutcome:
+        return RetrainOutcome(
+            promoted=False,
+            trigger=RetrainTrigger(
+                should_retrain=True, reasons=("reward_psi",), overlap_ok=True
+            ),
+            candidate_metrics={},
+            gate_reason="HOLD: DR below gate",
+            candidate_model_dir=None,
+        )
+
+    monkeypatch.setattr(RetrainLoop, "run", _hold_run)
+
+    settings = _settings(tmp_path)
+    report = run_drift_demo(
+        n_pre=200,
+        n_post=100,
+        shifts=2,
+        seed=3,
+        settings=settings,
+        report_path=None,
+    )
+
+    assert not report.promoted
+    assert len(report.shift_records) == 2
+    assert all(s.phase == "frozen" for s in report.shift_records)
+    assert "post_retrain" not in [s.phase for s in report.shift_records]
 
 
 def test_run_drift_demo_uses_isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

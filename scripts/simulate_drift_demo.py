@@ -265,35 +265,37 @@ def run_drift_demo(
                 report.promoted = True
                 promote_shift = k
 
-    # 4. Serve K more shifts with the promoted model.
-    more_post = generate_logs_with_drift(
-        n_post * shifts, settings=settings, seed=seed + 200, spec=spec
-    )
-    more_shifts = [more_post[i * per_shift : (i + 1) * per_shift] for i in range(shifts)]
-    for k, shift_events in enumerate(more_shifts):
-        signals, overlap_ok = _score_drift(
-            model=deployed_model,
-            policy=deployed_policy,
-            reference_events=reference_events,
-            recent_events=shift_events,
-            settings=settings,
-            deployed_dr=baseline_dr,
+    # 4. Serve K more shifts only after a successful promote (not on HOLD / no trigger).
+    more_post: list = []
+    if report.promoted:
+        more_post = generate_logs_with_drift(
+            n_post * shifts, settings=settings, seed=seed + 200, spec=spec
         )
-        calib = _calib_mae(deployed_model, shift_events)
-        regret = _mean_regret(shift_events, oracle)
-        mean_reward = float(np.mean([e.reward for e in shift_events if e.reward is not None]))
-        report.shift_records.append(
-            ShiftRecord(
-                shift_index=shifts + k,
-                phase="post_retrain",
-                n_events=len(shift_events),
-                mean_reward=mean_reward,
-                mean_regret=regret,
-                calibration_mae=calib,
-                signals=signals,
-                overlap_ok=overlap_ok,
+        more_shifts = [more_post[i * per_shift : (i + 1) * per_shift] for i in range(shifts)]
+        for k, shift_events in enumerate(more_shifts):
+            signals, overlap_ok = _score_drift(
+                model=deployed_model,
+                policy=deployed_policy,
+                reference_events=reference_events,
+                recent_events=shift_events,
+                settings=settings,
+                deployed_dr=baseline_dr,
             )
-        )
+            calib = _calib_mae(deployed_model, shift_events)
+            regret = _mean_regret(shift_events, oracle)
+            mean_reward = float(np.mean([e.reward for e in shift_events if e.reward is not None]))
+            report.shift_records.append(
+                ShiftRecord(
+                    shift_index=shifts + k,
+                    phase="post_retrain",
+                    n_events=len(shift_events),
+                    mean_reward=mean_reward,
+                    mean_regret=regret,
+                    calibration_mae=calib,
+                    signals=signals,
+                    overlap_ok=overlap_ok,
+                )
+            )
 
     report.promote_shift = promote_shift
 
