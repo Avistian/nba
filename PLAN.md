@@ -147,9 +147,19 @@ so all downstream code is unchanged. **Foundation for RDL.** The `BanditEvent` d
 `graph.npz`) plus one optional non-model `household_id` column. Ships `src/nba/data/relational_simulator.py`,
 `src/nba/data/graph.py`, `scripts/generate_relational_logs.py`, and a degenerate-world==flat test.
 
-### Phase 10 — Upgrade 1: Orienteering *(depends 6)* — [plan](plans/phase-10-orienteering.md) · [doc](docs/14-orienteering-upgrade.md)
+### Phase 10 — Upgrade 1: Orienteering *(depends 6)* — ✅ **built** — [plan](plans/phase-10-orienteering.md) · [doc](docs/14-orienteering-upgrade.md)
 Explicit shift-time budget (OP), multi-rep routing (TOP), and a real `OSRMEngine` — additive params
-on `solve_tsp_profits`, flags `use_time_budget`/`shift_hours`, `num_vehicles`, `distance_engine`.
+on `solve_tsp_profits` (`route_budget_s`, `num_vehicles`, `starts`/`ends`, returning `Route | list[Route]`),
+flags `use_time_budget`/`shift_hours`, `num_vehicles`, `vehicle_starts`/`vehicle_ends`, `distance_engine`/`osrm_url`.
+All defaults reproduce today's single-vehicle, window-only, straight-line routes. `OSRMEngine.time_matrix`
+calls the OSRM `/table` foot service over stdlib `urllib` (tests mock the one HTTP seam; CI stays offline).
+Leaderboard vs `baseline` (6 shifts): `phase10-budget` = **neutral** (the 3h residential window is tighter
+than the 8h budget, so it never binds — a feasibility guarantee, not a value lever at single-block scale);
+`phase10-team2` = **regression** at single-block scale (a lone rep already services every worthwhile door,
+so a 2nd rep is redundant — its value target is multi-territory routing, so the flag stays off by default);
+`phase10-osrm` deferred (needs a live OSRM server; validated by mocked-HTTP unit tests). Mechanics proven by
+`tests/test_routing.py` (budget binds/drops as it tightens; team partitions with no double-serve). See
+[decisions/2026-07-02-phase10-orienteering-implementation.md](decisions/2026-07-02-phase10-orienteering-implementation.md).
 
 ### Phase 11 — Upgrade 3: Risk-aware routing *(depends 4, 7)* — [plan](plans/phase-11-risk-aware-routing.md) · [doc](docs/15-risk-aware-routing.md)
 Price doors `mean − κ·std` over the bootstrap ensemble (optional CVaR); flags
@@ -223,7 +233,9 @@ and shared demo helpers in `drift_demo_common.py`. Makefile targets: `online-dri
 | Relational dataset mirrors flat (schema round-trip; degenerate==flat) | `tests/test_relational_simulator.py` (Phase 9) | ✅ |
 | Graph allow-list blocks geo/identity/protected at node+edge | `tests/test_graph.py` (Phase 9) | ✅ |
 | Flat `run_demo(seed=7)` byte-identical after oracle indirection | `tests/test_demo_dataset_modes.py` (Phase 17) | ✅ |
-| Budgeted route ≤ shift budget; team route never double-serves | `tests/test_routing.py` (Phase 10) | ⏳ planned |
+| Budgeted route ≤ shift budget; team route never double-serves | `tests/test_routing.py` (Phase 10) | ✅ |
+| All defaults reproduce today's single-vehicle route; `num_vehicles=1` returns a single `Route` | `tests/test_routing.py`, `tests/test_config.py` (Phase 10) | ✅ |
+| `OSRMEngine` parses `/table` durations (symmetric, zero-diag) and raises on failure (mocked HTTP) | `tests/test_distance.py` (Phase 10) | ✅ |
 | All upgrade flags off reproduce today's behavior exactly | per-phase tests (Phases 9–16) | ⏳ planned |
 | Risk-aware routing reduces realized-value variance (κ=0 no-op) | `tests/test_orchestrator.py` (Phase 11) | ⏳ planned |
 | Decision-focused model lowers decision regret at ≥ OPE | `tests/test_decision_focused.py` (Phase 12) | ⏳ planned |

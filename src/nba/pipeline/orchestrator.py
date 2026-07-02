@@ -16,9 +16,20 @@ import numpy as np
 from nba.api.store import EventStore
 from nba.bandits.base import Policy, QModel
 from nba.config import Settings
-from nba.routing.distance import DistanceEngine
+from nba.routing.distance import DistanceEngine, HaversineEngine, OSRMEngine
 from nba.routing.tsp_profits import Route, solve_tsp_profits
 from nba.schema import ACTIONS, Action, Outcome, ProspectContext
+
+
+def build_distance_engine(settings: Settings) -> DistanceEngine:
+    """Construct the travel-time engine selected by ``settings.distance_engine``.
+
+    Defaults to :class:`HaversineEngine` (offline, no network); ``distance_engine="osrm"`` opts
+    into the road-network :class:`OSRMEngine` at ``settings.osrm_url``.
+    """
+    if settings.distance_engine == "osrm":
+        return OSRMEngine(settings.osrm_url)
+    return HaversineEngine(speed_kmh=settings.walking_speed_kmh)
 
 
 @dataclass(frozen=True)
@@ -91,14 +102,20 @@ class Orchestrator:
         weights = np.array([dist[a] for a in ACTIONS], dtype=np.float64)
         return float((weights * q).sum())
 
-    def plan_route(self, contexts: list[ProspectContext]) -> Route:
+    def plan_route(self, contexts: list[ProspectContext]) -> Route | list[Route]:
         """Plan a walkable route over ``contexts``, pricing each door by its bandit-weighted value.
 
         The depot is the centroid of the doors (a stand-in for the rep's current location);
         every door inherits the configured residential time window.
+
+        Returns a single :class:`Route` for one rep (``num_vehicles == 1``, the default), or one
+        :class:`Route` per rep when ``num_vehicles > 1`` (Team Orienteering). With
+        ``use_time_budget`` each rep's route is bounded by ``shift_hours``.
         """
         if not contexts:
-            return Route(order=[], visited=[], dropped=[], total_time_s=0.0, total_profit=0.0)
+            empty = Route(order=[], visited=[], dropped=[], total_time_s=0.0, total_profit=0.0)
+            n_vehicles = self._settings.num_vehicles
+            return [empty] * n_vehicles if n_vehicles > 1 else empty
 
         door_coords = [(c.lat, c.lon) for c in contexts]
         depot = (
@@ -113,6 +130,12 @@ class Orchestrator:
         close_s = self._settings.time_window[1] * 3600
         time_windows = [(open_s, close_s)] * len(coords)
 
+        route_budget_s = (
+            self._settings.shift_hours * 3600.0 if self._settings.use_time_budget else None
+        )
+        starts = list(self._settings.vehicle_starts) if self._settings.vehicle_starts else None
+        ends = list(self._settings.vehicle_ends) if self._settings.vehicle_ends else None
+
         return solve_tsp_profits(
             coords,
             profits,
@@ -123,8 +146,12 @@ class Orchestrator:
             drop_scale=self._settings.drop_scale,
             lambda_travel=self._settings.lambda_travel,
             seed=self._settings.seed,
+            route_budget_s=route_budget_s,
+            num_vehicles=self._settings.num_vehicles,
+            starts=starts,
+            ends=ends,
         )
 
-    def replan(self, remaining: list[ProspectContext]) -> Route:
+    def replan(self, remaining: list[ProspectContext]) -> Route | list[Route]:
         """Re-solve the route over the doors not yet visited."""
         return self.plan_route(remaining)

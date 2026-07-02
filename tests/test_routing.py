@@ -115,3 +115,113 @@ def test_depot_only_yields_empty_visits() -> None:
     assert route.visited == []
     assert route.dropped == []
     assert route.order == [0]
+
+
+# --- Phase 10: orienteering (budget), team routing, back-compat ---------------------------------
+
+
+def test_num_vehicles_one_returns_single_route_equal_to_default() -> None:
+    coords = [(42.0, -93.6)] + [(42.0 + 0.0005 * k, -93.6) for k in range(4)]
+    profits = [0.0] + [1.0] * 4
+    tm = _tm(coords)
+
+    explicit = solve_tsp_profits(coords, profits, tm, num_vehicles=1, time_limit_s=2.0)
+    default = solve_tsp_profits(coords, profits, tm, time_limit_s=2.0)
+
+    assert isinstance(explicit, Route)  # single rep => single Route, never a list
+    assert explicit == default
+
+
+def test_time_budget_bounds_route_and_tighter_drops_more() -> None:
+    # A line of eight equally-spaced high-profit doors; only the budget limits how many are served.
+    coords = [(42.0, -93.6)] + [(42.0, -93.6 + 0.002 * k) for k in range(1, 9)]
+    profits = [0.0] + [1.0] * 8
+    tm = _tm(coords)
+
+    generous = solve_tsp_profits(coords, profits, tm, route_budget_s=8000.0, time_limit_s=2.0)
+    tight = solve_tsp_profits(coords, profits, tm, route_budget_s=1500.0, time_limit_s=2.0)
+    assert isinstance(generous, Route)
+    assert isinstance(tight, Route)
+
+    # Every route stays within its budget (tolerance covers integer travel-time rounding).
+    assert generous.total_time_s <= 8000.0 + len(generous.order)
+    assert tight.total_time_s <= 1500.0 + len(tight.order)
+    # A tighter budget can only drop the same or more doors.
+    assert len(tight.visited) <= len(generous.visited)
+    assert len(tight.dropped) >= len(generous.dropped)
+
+
+def test_time_budget_composes_with_seconds_of_day_windows() -> None:
+    # Windows put the clock in seconds-of-day (16:00-19:00); the budget bounds the shift *duration*,
+    # so the two must not conflict into infeasibility (regression guard for the span-bound fix).
+    coords = [(42.0, -93.6)] + [(42.0, -93.6 + 0.0008 * k) for k in range(1, 7)]
+    profits = [0.0] + [1.0] * 6
+    tm = _tm(coords)
+    windows = [(16 * 3600, 19 * 3600)] * len(coords)
+
+    tight = solve_tsp_profits(
+        coords, profits, tm, time_windows=windows, route_budget_s=1200.0, time_limit_s=2.0
+    )
+    loose = solve_tsp_profits(
+        coords, profits, tm, time_windows=windows, route_budget_s=3.0 * 3600, time_limit_s=2.0
+    )
+    assert isinstance(tight, Route)
+    assert isinstance(loose, Route)
+    # A 20-minute shift can service fewer doors than a 3-hour one, but both stay feasible.
+    assert len(tight.visited) <= len(loose.visited)
+
+
+def test_team_routing_partitions_doors_without_double_serving() -> None:
+    coords = [(42.0, -93.6)] + [(42.0 + 0.0005 * k, -93.6 + 0.0005 * k) for k in range(8)]
+    profits = [0.0] + [1.0] * 8
+    tm = _tm(coords)
+
+    routes = solve_tsp_profits(coords, profits, tm, num_vehicles=2, time_limit_s=2.0)
+
+    assert isinstance(routes, list)
+    assert len(routes) == 2
+
+    all_visited = [node for r in routes for node in r.visited]
+    assert len(all_visited) == len(set(all_visited))  # no door served by two reps
+
+    served = set(all_visited)
+    dropped = set(routes[0].dropped)  # dropped is the global no-rep-served set
+    assert served.isdisjoint(dropped)
+    assert served | dropped == set(range(1, 9))
+    for r in routes:  # each rep's route is an independent depot-to-depot walk
+        assert r.order[0] == 0
+        assert r.order[-1] == 0
+
+
+def test_per_rep_start_end_depots() -> None:
+    # Two distinct depots (indices 0, 1) and four doors (indices 2..5).
+    coords = [(42.0, -93.60), (42.0, -93.70)]
+    coords += [(42.0 + 0.0005 * k, -93.65) for k in range(4)]
+    profits = [0.0, 0.0] + [1.0] * 4
+    tm = _tm(coords)
+
+    routes = solve_tsp_profits(
+        coords, profits, tm, num_vehicles=2, starts=[0, 1], ends=[0, 1], time_limit_s=2.0
+    )
+
+    assert isinstance(routes, list)
+    assert len(routes) == 2
+    assert routes[0].order[0] == 0 and routes[0].order[-1] == 0
+    assert routes[1].order[0] == 1 and routes[1].order[-1] == 1
+    served = {node for r in routes for node in r.visited}
+    assert served <= {2, 3, 4, 5}  # only doors are serviceable, never a depot
+
+
+def test_invalid_team_and_budget_params_raise() -> None:
+    coords = [(42.0, -93.600), (42.0, -93.601)]
+    tm = _tm(coords)
+    profits = [0.0, 1.0]
+
+    with pytest.raises(ValueError):
+        solve_tsp_profits(coords, profits, tm, num_vehicles=0)
+    with pytest.raises(ValueError):
+        solve_tsp_profits(coords, profits, tm, starts=[0])  # ends missing
+    with pytest.raises(ValueError):
+        solve_tsp_profits(coords, profits, tm, num_vehicles=2, starts=[0], ends=[0])  # wrong length
+    with pytest.raises(ValueError):
+        solve_tsp_profits(coords, profits, tm, route_budget_s=-1.0)

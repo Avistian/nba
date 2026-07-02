@@ -8,10 +8,15 @@ stub that documents the seam for dropping in a real road-network service later.
 
 from __future__ import annotations
 
+import json
+import urllib.error
+import urllib.request
 from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
+
+from nba.routing.tsp_profits import RoutingError
 
 #: Mean Earth radius (km), WGS-84 authalic sphere.
 _EARTH_RADIUS_KM = 6371.0088
@@ -78,17 +83,20 @@ class HaversineEngine:
 
 
 class OSRMEngine:
-    """Stub conforming to :class:`DistanceEngine` for a future real road network.
+    """Road-network travel times from an OSRM Table service.
 
-    When wired up, ``time_matrix`` should call the OSRM Table service and return the durations
-    block verbatim::
+    ``time_matrix`` queries the OSRM ``/table`` endpoint over the foot profile::
 
         GET {base_url}/table/v1/foot/{lon1},{lat1};{lon2},{lat2};...?annotations=duration
         -> response_json["durations"]  # (n, n) list-of-lists, travel time in seconds
 
-    Implementing this class requires touching no callers: every consumer depends only on the
-    :class:`DistanceEngine` protocol, so the seam is validated by the conformance test today.
+    Every consumer depends only on the :class:`DistanceEngine` protocol, so swapping this in for
+    :class:`HaversineEngine` touches no callers. Network access is opt-in (default is Haversine);
+    the single HTTP seam :meth:`_fetch` is monkeypatched in tests so CI stays offline.
     """
+
+    #: HTTP timeout for the Table request, in seconds.
+    _TIMEOUT_S = 10.0
 
     def __init__(self, base_url: str) -> None:
         self._base_url = base_url.rstrip("/")
@@ -98,8 +106,45 @@ class OSRMEngine:
         """The configured OSRM service root (no trailing slash)."""
         return self._base_url
 
+    def _fetch(self, url: str) -> dict[str, Any]:
+        """GET ``url`` and return the parsed JSON body. The one network seam (mocked in tests)."""
+        try:
+            with urllib.request.urlopen(url, timeout=self._TIMEOUT_S) as resp:  # noqa: S310
+                status = getattr(resp, "status", 200)
+                if status != 200:
+                    raise RoutingError(f"OSRM returned HTTP {status} for {url}")
+                payload = resp.read()
+        except urllib.error.URLError as exc:  # transport failure, DNS, refused connection, ...
+            raise RoutingError(f"OSRM request failed: {exc}") from exc
+        try:
+            return json.loads(payload)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise RoutingError("OSRM returned a non-JSON body") from exc
+
     def time_matrix(self, coords: Sequence[tuple[float, float]]) -> np.ndarray:
-        raise NotImplementedError(
-            "OSRMEngine is a stub; wire it to the OSRM /table service "
-            f"(would query {self._base_url}/table/v1/foot/... for {len(coords)} doors)."
-        )
+        n = len(coords)
+        if n == 0:
+            return np.zeros((0, 0), dtype=np.float64)
+
+        # OSRM expects lon,lat pairs joined by ';'.
+        waypoints = ";".join(f"{lon},{lat}" for lat, lon in coords)
+        url = f"{self._base_url}/table/v1/foot/{waypoints}?annotations=duration"
+
+        body = self._fetch(url)
+        if body.get("code") != "Ok":
+            raise RoutingError(f"OSRM response code {body.get('code')!r}: {body.get('message')}")
+        durations = body.get("durations")
+        if durations is None:
+            raise RoutingError("OSRM response missing 'durations' block")
+
+        matrix = np.asarray(durations, dtype=np.float64)
+        if matrix.shape != (n, n):
+            raise RoutingError(f"OSRM durations must be ({n}, {n}), got {matrix.shape}")
+        if not np.all(np.isfinite(matrix)):
+            raise RoutingError("OSRM durations contain non-finite entries (unroutable pair?)")
+
+        np.fill_diagonal(matrix, 0.0)
+        # OSRM durations can be mildly asymmetric (one-ways); force the symmetry the protocol and
+        # OR-Tools assume by averaging the two directions.
+        matrix = 0.5 * (matrix + matrix.T)
+        return matrix

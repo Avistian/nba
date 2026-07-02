@@ -42,9 +42,9 @@ from nba.ethics import EthicalPolicy
 from nba.eval.oracle import oracle_for
 from nba.ope.estimators import LoggedBatch, q_matrix
 from nba.ope.gate import PromotionGate
-from nba.pipeline.orchestrator import Orchestrator
+from nba.pipeline.orchestrator import Orchestrator, build_distance_engine
 from nba.reward.model import RewardModel
-from nba.routing.distance import HaversineEngine
+from nba.routing.tsp_profits import Route
 from nba.schema import ACTIONS, REWARD, ProspectContext
 
 
@@ -151,6 +151,25 @@ def _build_policies(
     ]
 
 
+def _plan_to_doors(
+    plan: Route | list[Route], doors: list[ProspectContext]
+) -> list[ProspectContext]:
+    """Flatten a (possibly multi-rep) plan into the doors to service, in visiting order.
+
+    ``plan_route`` builds ``coords = [depot, *doors]``, so node ``k >= 1`` is ``doors[k - 1]``.
+    For a team plan the per-rep orders are concatenated (they are disjoint by construction).
+    """
+    routes = plan if isinstance(plan, list) else [plan]
+    seq: list[ProspectContext] = []
+    seen: set[int] = set()
+    for route in routes:
+        for node in route.order:
+            if node != 0 and (node - 1) not in seen:
+                seen.add(node - 1)
+                seq.append(doors[node - 1])
+    return seq
+
+
 def _naive_nn_time(coords: list[tuple[float, float]], tm: np.ndarray, service_s: float) -> float:
     """Total time of a greedy nearest-neighbor tour that visits *every* door (depot at 0)."""
     n = len(coords)
@@ -246,29 +265,37 @@ def run_demo(
         oracle = oracle_for(settings)
     store = EventStore(settings.db_path)
     policy = EthicalPolicy(selected, settings, rng=np.random.default_rng(seed + 2))
+    engine = build_distance_engine(settings)
     orch = Orchestrator(
         policy=policy,
         reward_model=model,
-        distance_engine=HaversineEngine(speed_kmh=settings.walking_speed_kmh),
+        distance_engine=engine,
         store=store,
         settings=settings,
     )
 
-    # Routing stats from the initial plan + a visit-all baseline.
+    # Routing stats from the initial plan + a visit-all baseline. A team plan (num_vehicles > 1)
+    # returns one route per rep; reps walk in parallel, so wall-clock time is the slowest rep and
+    # throughput is the union of doors served.
     initial = orch.plan_route(contexts)
+    initial_routes = initial if isinstance(initial, list) else [initial]
+    team_visited = sum(len(r.visited) for r in initial_routes)
+    team_dropped = len(initial_routes[0].dropped)  # dropped is the global no-rep-served set
+    team_route_time_s = max(r.total_time_s for r in initial_routes)
+
     door_coords = [(c.lat, c.lon) for c in contexts]
     depot = (
         float(np.mean([la for la, _ in door_coords])),
         float(np.mean([lo for _, lo in door_coords])),
     )
     full_coords = [depot, *door_coords]
-    tm = HaversineEngine(speed_kmh=settings.walking_speed_kmh).time_matrix(full_coords)
+    tm = engine.time_matrix(full_coords)
     naive_time = _naive_nn_time(full_coords, tm, service_s=120.0)
 
     sim_rng = np.random.default_rng(seed + 3)
     remaining = list(contexts)
     route = initial
-    order = [remaining[node - 1] for node in route.order if node != 0]
+    order = _plan_to_doors(route, remaining)
 
     regret_curve: list[float] = []
     chosen_true: list[float] = []
@@ -297,7 +324,7 @@ def run_demo(
 
         if step % replan_every == 0 and remaining:
             route = orch.replan(remaining)
-            order = [remaining[node - 1] for node in route.order if node != 0]
+            order = _plan_to_doors(route, remaining)
 
     # 6. Baselines on the *same* serviced doors (expected reward, oracle, eval-only).
     bandit_expected = float(sum(chosen_true))
@@ -331,11 +358,11 @@ def run_demo(
         avg_regret_curve=avg_regret_curve,
         routing={
             "candidates": float(len(contexts)),
-            "visited": float(len(initial.visited)),
-            "dropped": float(len(initial.dropped)),
-            "route_time_min": initial.total_time_s / 60.0,
+            "visited": float(team_visited),
+            "dropped": float(team_dropped),
+            "route_time_min": team_route_time_s / 60.0,
             "naive_visit_all_time_min": naive_time / 60.0,
-            "time_saved_min": (naive_time - initial.total_time_s) / 60.0,
+            "time_saved_min": (naive_time - team_route_time_s) / 60.0,
         },
         n_decisions=len(serviced),
         min_propensity=float(min(propensities)) if propensities else 0.0,

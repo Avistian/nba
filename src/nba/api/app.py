@@ -85,7 +85,10 @@ def build_app(
     @app.post("/route", response_model=RouteResponse)
     def route(req: RouteRequest, request: Request) -> RouteResponse:
         plan = _orchestrator(request).plan_route(req.contexts)
-        return _route_response(req.contexts, plan)
+        # The service is single-vehicle; if a team plan is configured, report the first rep's
+        # route (the response schema is unchanged in Phase 10).
+        first = plan[0] if isinstance(plan, list) else plan
+        return _route_response(req.contexts, first)
 
     @app.get("/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
@@ -105,8 +108,8 @@ async def _default_lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Imported lazily so importing the module (e.g. in tests) never touches disk models.
     from nba.bandits.epsilon_greedy import EpsilonGreedy
     from nba.config import get_settings
+    from nba.pipeline.orchestrator import build_distance_engine
     from nba.reward.model import RewardModel
-    from nba.routing.distance import HaversineEngine
 
     settings = get_settings()
     settings.ensure_dirs()
@@ -117,7 +120,7 @@ async def _default_lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.orchestrator = Orchestrator(
         policy=policy,
         reward_model=model,
-        distance_engine=HaversineEngine(speed_kmh=settings.walking_speed_kmh),
+        distance_engine=build_distance_engine(settings),
         store=store,
         settings=settings,
     )

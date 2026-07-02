@@ -53,34 +53,54 @@ def solve_tsp_profits(
     lambda_travel: float = 1.0,
     time_limit_s: float = 5.0,
     seed: int = 7,
-) -> Route:
-    """Solve a single-vehicle TSP-with-Profits over ``coords``.
+    route_budget_s: float | None = None,
+    num_vehicles: int = 1,
+    starts: list[int] | None = None,
+    ends: list[int] | None = None,
+) -> Route | list[Route]:
+    """Solve a TSP-with-Profits (optionally an Orienteering Problem for a team of reps).
 
     Args:
         coords: ``(lat, lon)`` per door; ``coords[depot]`` is the rep's start/end.
         profits: per-door value of servicing it; the depot's entry is ignored.
         time_matrix: ``(n, n)`` travel time in seconds (see :mod:`nba.routing.distance`).
-        depot: index of the start/end node.
-        capacity: max doors serviced in the shift; ``None`` for unlimited.
+        depot: index of the shared start/end node (ignored when ``starts``/``ends`` are given).
+        capacity: max doors serviced per rep in the shift; ``None`` for unlimited.
         time_windows: per-node ``(open, close)`` in seconds-of-day; ``None`` to ignore.
         service_time_s: dwell per serviced door (knock + pitch).
         drop_scale: multiplies profit into the integer drop penalty (OR-Tools needs int costs).
         lambda_travel: weight on travel time in the arc cost, traded against drop penalties.
         time_limit_s: wall-clock budget for the metaheuristic.
         seed: reserved for reproducibility; the search is deterministic for a fixed instance.
+        route_budget_s: Orienteering budget; bounds each vehicle's end-of-route cumulative time.
+            ``None`` (default) leaves the route unbounded (a Prize-Collecting TSP).
+        num_vehicles: reps to route (Team Orienteering). ``1`` (default) is a single rep.
+        starts: per-rep start nodes; ``None`` => every rep shares ``depot``.
+        ends: per-rep end nodes; ``None`` => every rep shares ``depot``. Must accompany ``starts``.
 
     Returns:
-        The chosen :class:`Route`.
+        A single :class:`Route` when ``num_vehicles == 1``; otherwise a list of one
+        :class:`Route` per rep. Each ``dropped`` list is the set of doors served by *no* rep.
 
     Raises:
         RoutingError: if no feasible route exists under the constraints.
-        ValueError: on shape/length mismatches.
+        ValueError: on shape/length mismatches or invalid team/budget parameters.
     """
     del seed  # Search is deterministic for a fixed instance; kept for API stability.
 
+    if num_vehicles < 1:
+        raise ValueError(f"num_vehicles must be >= 1, got {num_vehicles}")
+    if route_budget_s is not None and route_budget_s < 0:
+        raise ValueError(f"route_budget_s must be >= 0, got {route_budget_s}")
+    if (starts is None) != (ends is None):
+        raise ValueError("provide both starts and ends, or neither")
+
+    def _finalize(routes: list[Route]) -> Route | list[Route]:
+        return routes[0] if num_vehicles == 1 else routes
+
     n = len(coords)
     if n == 0:
-        return Route(order=[], visited=[], dropped=[], total_time_s=0.0, total_profit=0.0)
+        return _finalize([Route([], [], [], 0.0, 0.0) for _ in range(num_vehicles)])
 
     profit_arr = np.asarray(profits, dtype=np.float64)
     tm = np.asarray(time_matrix, dtype=np.float64)
@@ -92,12 +112,26 @@ def solve_tsp_profits(
         raise ValueError(f"time_windows must have length {n}, got {len(time_windows)}")
     if not 0 <= depot < n:
         raise ValueError(f"depot {depot} out of range for {n} nodes")
+    if starts is not None:
+        assert ends is not None  # guaranteed by the paired-None check above
+        if len(starts) != num_vehicles or len(ends) != num_vehicles:
+            raise ValueError(f"starts/ends must each have length num_vehicles={num_vehicles}")
+        for idx in (*starts, *ends):
+            if not 0 <= idx < n:
+                raise ValueError(f"vehicle depot {idx} out of range for {n} nodes")
+
+    # Nodes that are depots (not serviceable doors): the shared depot, or every per-rep endpoint.
+    depot_nodes = set(starts) | set(ends) if starts is not None and ends is not None else {depot}
 
     # Trivial instance: depot only, nothing to service.
     if n == 1:
-        return Route(order=[depot], visited=[], dropped=[], total_time_s=0.0, total_profit=0.0)
+        return _finalize([Route([depot], [], [], 0.0, 0.0) for _ in range(num_vehicles)])
 
-    manager = pywrapcp.RoutingIndexManager(n, 1, depot)
+    if starts is not None:
+        assert ends is not None
+        manager = pywrapcp.RoutingIndexManager(n, num_vehicles, list(starts), list(ends))
+    else:
+        manager = pywrapcp.RoutingIndexManager(n, num_vehicles, depot)
     routing = pywrapcp.RoutingModel(manager)
 
     def arc_cost(from_index: int, to_index: int) -> int:
@@ -108,9 +142,10 @@ def solve_tsp_profits(
     cost_cb = routing.RegisterTransitCallback(arc_cost)
     routing.SetArcCostEvaluatorOfAllVehicles(cost_cb)
 
-    # Every non-depot door is optional; dropping it costs its scaled profit.
+    # Every non-depot door is optional; dropping it costs its scaled profit. A single disjunction
+    # per door means at most one rep may serve it (no double-serving in the team case).
     for node in range(n):
-        if node == depot:
+        if node in depot_nodes:
             continue
         penalty = int(round(max(0.0, float(profit_arr[node])) * drop_scale))
         routing.AddDisjunction([manager.NodeToIndex(node)], penalty)
@@ -120,26 +155,46 @@ def solve_tsp_profits(
             raise ValueError("capacity must be >= 0")
 
         def demand_cb(from_index: int) -> int:
-            return 0 if manager.IndexToNode(from_index) == depot else 1
+            return 0 if manager.IndexToNode(from_index) in depot_nodes else 1
 
         demand_idx = routing.RegisterUnaryTransitCallback(demand_cb)
-        routing.AddDimensionWithVehicleCapacity(demand_idx, 0, [int(capacity)], True, "Capacity")
+        routing.AddDimensionWithVehicleCapacity(
+            demand_idx, 0, [int(capacity)] * num_vehicles, True, "Capacity"
+        )
 
-    if time_windows is not None:
-        horizon = max(int(close) for _, close in time_windows)
+    # A Time dimension is needed for per-node windows and/or the orienteering budget.
+    if time_windows is not None or route_budget_s is not None:
 
         def time_cb(from_index: int, to_index: int) -> int:
             i = manager.IndexToNode(from_index)
             j = manager.IndexToNode(to_index)
-            service = 0.0 if i == depot else service_time_s
+            service = 0.0 if i in depot_nodes else service_time_s
             return int(round(float(tm[i][j]) + service))
 
         time_idx = routing.RegisterTransitCallback(time_cb)
-        # slack_max = horizon allows waiting for a window to open; do not pin start to 0.
-        routing.AddDimension(time_idx, horizon, horizon, False, "Time")
-        time_dim = routing.GetDimensionOrDie("Time")
-        for node, (open_s, close_s) in enumerate(time_windows):
-            time_dim.CumulVar(manager.NodeToIndex(node)).SetRange(int(open_s), int(close_s))
+
+        if time_windows is not None:
+            horizon = max(int(close) for _, close in time_windows)
+            if route_budget_s is not None:
+                horizon = max(horizon, int(np.ceil(route_budget_s)))
+            # slack_max = horizon allows waiting for a window to open; do not pin start to 0.
+            routing.AddDimension(time_idx, horizon, horizon, False, "Time")
+            time_dim = routing.GetDimensionOrDie("Time")
+            for node, (open_s, close_s) in enumerate(time_windows):
+                time_dim.CumulVar(manager.NodeToIndex(node)).SetRange(int(open_s), int(close_s))
+        else:
+            # Budget only: no windows, so forbid slack (waiting) and start the clock at zero.
+            horizon = int(np.ceil(route_budget_s)) if route_budget_s is not None else 0
+            routing.AddDimension(time_idx, 0, horizon, True, "Time")
+            time_dim = routing.GetDimensionOrDie("Time")
+
+        if route_budget_s is not None:
+            # Bound each rep's shift *duration* (end - start), not the absolute end cumul: with
+            # seconds-of-day time windows the clock does not start at zero, so a span bound is the
+            # frame-independent way to express the orienteering budget (and reduces to end <= B when
+            # the clock starts at 0, i.e. the no-windows case).
+            for v in range(num_vehicles):
+                time_dim.SetSpanUpperBoundForVehicle(int(route_budget_s), v)
 
     params = pywrapcp.DefaultRoutingSearchParameters()
     params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
@@ -152,32 +207,36 @@ def solve_tsp_profits(
     solution = routing.SolveWithParameters(params)
     if solution is None:
         raise RoutingError(
-            "no feasible route found; relax capacity/time windows or check the time matrix"
+            "no feasible route found; relax capacity/time windows/budget or check the time matrix"
         )
 
-    order: list[int] = []
-    index = routing.Start(0)
-    while not routing.IsEnd(index):
-        order.append(manager.IndexToNode(index))
-        index = solution.Value(routing.NextVar(index))
-    order.append(manager.IndexToNode(index))  # closing depot
+    def _decode(vehicle: int) -> tuple[list[int], list[int]]:
+        order: list[int] = []
+        index = routing.Start(vehicle)
+        while not routing.IsEnd(index):
+            order.append(manager.IndexToNode(index))
+            index = solution.Value(routing.NextVar(index))
+        order.append(manager.IndexToNode(index))  # closing depot
+        visited = [node for node in order if node not in depot_nodes]
+        return order, visited
 
-    visited = [node for node in order if node != depot]
-    dropped = [
-        node
-        for node in range(n)
-        if node != depot
-        and solution.Value(routing.NextVar(manager.NodeToIndex(node))) == manager.NodeToIndex(node)
-    ]
+    decoded = [_decode(v) for v in range(num_vehicles)]
+    served = {node for _, visited in decoded for node in visited}
+    dropped = [node for node in range(n) if node not in depot_nodes and node not in served]
 
-    travel_s = sum(float(tm[a][b]) for a, b in zip(order[:-1], order[1:], strict=True))
-    total_time_s = travel_s + service_time_s * len(visited)
-    total_profit = float(sum(profit_arr[node] for node in visited))
+    routes: list[Route] = []
+    for order, visited in decoded:
+        travel_s = sum(float(tm[a][b]) for a, b in zip(order[:-1], order[1:], strict=True))
+        total_time_s = travel_s + service_time_s * len(visited)
+        total_profit = float(sum(profit_arr[node] for node in visited))
+        routes.append(
+            Route(
+                order=order,
+                visited=visited,
+                dropped=dropped,
+                total_time_s=total_time_s,
+                total_profit=total_profit,
+            )
+        )
 
-    return Route(
-        order=order,
-        visited=visited,
-        dropped=dropped,
-        total_time_s=total_time_s,
-        total_profit=total_profit,
-    )
+    return _finalize(routes)

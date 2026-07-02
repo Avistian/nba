@@ -47,6 +47,18 @@ def test_phase18_flags_default_off() -> None:
     assert s.alert_debounce_minutes == 30
 
 
+def test_phase10_flags_default_to_today() -> None:
+    """With no env overrides, Phase 10 flags reproduce single-vehicle, window-only routing."""
+    s = Settings()
+    assert s.use_time_budget is False
+    assert s.shift_hours == pytest.approx(8.0)
+    assert s.num_vehicles == 1
+    assert s.vehicle_starts is None
+    assert s.vehicle_ends is None
+    assert s.distance_engine == "haversine"
+    assert s.osrm_url == "http://localhost:5000"
+
+
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NBA_EPSILON", "0.3")
     get_settings.cache_clear()

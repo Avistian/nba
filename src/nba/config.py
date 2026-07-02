@@ -45,6 +45,16 @@ class Settings(BaseSettings):
     drop_scale: float = 1000.0
     time_window: tuple[int, int] = (16, 19)
 
+    # Phase 10 — orienteering upgrades. All default to today's single-vehicle, window-only,
+    # straight-line behavior; the router is byte-identical until a flag is set.
+    use_time_budget: bool = False  # bound the route's end-of-day cumulative Time (OP)
+    shift_hours: float = 8.0  # budget B = shift_hours * 3600 s when use_time_budget
+    num_vehicles: int = 1  # reps to route (TOP); 1 == today
+    vehicle_starts: tuple[int, ...] | None = None  # per-rep start depots; None => shared depot
+    vehicle_ends: tuple[int, ...] | None = None  # per-rep end depots; None => shared depot
+    distance_engine: Literal["haversine", "osrm"] = "haversine"  # travel-time backend
+    osrm_url: str = "http://localhost:5000"  # OSRM Table service root when distance_engine=osrm
+
     # ope / gate
     ope_min_lift: float = 0.0
     ope_z: float = 1.96
