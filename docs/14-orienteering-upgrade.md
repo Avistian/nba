@@ -86,4 +86,43 @@ Extend the demo/tests to assert: a budgeted route never exceeds `shift_hours`; a
 doors are the disjoint union across reps (no double-serve); switching to OSRM changes only the matrix.
 All defaults reproduce today's deterministic routes.
 
+## 8. How the shipped code works (as-built)
+
+Sections 1-7 describe the *design*; here is what actually landed (and the one thing the recipe got
+wrong). Full rationale in
+[decisions/2026-07-02-phase10-orienteering-implementation.md](../decisions/2026-07-02-phase10-orienteering-implementation.md).
+
+- **The budget is a span bound, not an absolute cap.** The doc 11 recipe
+  `time_dim.CumulVar(routing.End(v)).SetMax(B)` assumes the clock starts at 0. But `plan_route` uses
+  **seconds-of-day** time windows (a 16:00-19:00 residential window is cumul `57600..68400`), so an
+  absolute `End <= 28800` cap contradicts the windows and the *whole solve goes infeasible*
+  (`RoutingError`) — which is exactly what the first leaderboard run hit. The shipped code instead
+  bounds each rep's **duration** with `time_dim.SetSpanUpperBoundForVehicle(int(route_budget_s), v)`
+  (see [`tsp_profits.py`](../src/nba/routing/tsp_profits.py) §"Bound each rep's shift *duration*").
+  A span bound is frame-independent and reduces to `end <= B` in the no-windows case. Guarded by
+  `tests/test_routing.py::test_time_budget_composes_with_seconds_of_day_windows`.
+- **Return type: `Route | list[Route]`.** `solve_tsp_profits` returns a single `Route` when
+  `num_vehicles == 1` (the exact Phase 6 path, so every prior test passes verbatim) and a *list* of
+  one `Route` per rep otherwise. `run_demo._plan_to_doors` flattens either shape into a visiting
+  order, skipping the depot and de-duplicating (team routes are disjoint by construction).
+- **Team wall-clock = the slowest rep; throughput = the union.** Reps walk in parallel, so the graded
+  demo scores a team shift by `max(r.total_time_s for r in routes)` and the union of served doors —
+  `dropped` is the global no-rep-served set (one `AddDisjunction` per door guarantees no
+  double-serving).
+- **`OSRMEngine` uses stdlib `urllib`, not `requests`/`httpx`.** The one network call sits in a
+  private `_fetch` seam that tests monkeypatch, so no runtime dependency is added and CI stays
+  offline. Durations are symmetrized (`0.5*(m + m.T)`) and zero-diagonaled to satisfy the
+  `DistanceEngine` contract OR-Tools relies on; failures wrap into `RoutingError`.
+- **The API stays single-vehicle.** `/route` reports the first rep's route when a team is configured
+  (no response-schema change in this phase); team routing is exercised through the solver and the
+  graded demo/leaderboard.
+- **What the leaderboard said (and why).** On the single dense 0.3 km demo block: `phase10-budget` =
+  **neutral** (the 3 h residential window is tighter than the 8 h budget, so the budget never binds —
+  a feasibility guarantee, not a value lever at this scale); `phase10-team2` = **regression** (one
+  rep already services every worthwhile door on one block, so a 2nd rep only adds sampling noise —
+  Team Orienteering's value target is *multi-territory* routing, shown in
+  [`notebooks/team_orienteering_demo.ipynb`](../notebooks/team_orienteering_demo.ipynb));
+  `phase10-osrm` = **deferred** (needs a live OSRM `/table` service; validated by mocked-HTTP unit
+  tests). All three flags therefore stay off by default.
+
 > Next: [15-risk-aware-routing.md](15-risk-aware-routing.md) — spend the uncertainty you already have.

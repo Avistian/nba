@@ -77,7 +77,29 @@ and add categories as the project evolves.
 
 **Source:** knowledge/dataset-eval/rules.md R5–R6, decisions/2026-06-18-dataset-aware-grading-oracle.md
 
-**Last triggered:** 2026-06-18 (Phase 17 leaderboard)
+**Last triggered:** 2026-07-06 (Phase 11 — a first `phase11-risk-kappa0` row recorded a spurious
+regression from a not-quite-no-op price; fixed, then superseded by a new append-only row)
+
+---
+
+## Category: Feature-flag no-op / backward compatibility
+
+**Severity:** blocking
+
+**Criteria:**
+
+- [ ] A new upgrade flag defaults to today's behavior, and its "identity" setting (e.g.
+      `risk_kappa=0`, `num_vehicles=1`) reproduces the baseline **exactly**, not approximately
+- [ ] The no-op is proven against the *deployed* estimator, not a proxy — e.g. a risk price anchors
+      its mean on `door_profit` (the full-fit model), never the ensemble mean, which only *approximates* it
+- [ ] The exact no-op is asserted by a unit test **and** (for graded flags) confirmed by an
+      identity-setting leaderboard row that equals `baseline`
+
+**Source:** PLAN.md "feature-flag-first" principle, decisions/2026-06-18-feature-flagged-relational-upgrades.md,
+decisions/2026-07-06-phase11-risk-aware-routing-implementation.md
+
+**Last triggered:** 2026-07-06 (Phase 11 — `door_profit_risk` first priced off the ensemble mean, so
+`kappa=0` drifted from `door_profit`; re-anchored on `door_profit` for a bit-exact no-op)
 
 ---
 
@@ -172,8 +194,8 @@ and add categories as the project evolves.
 
 **Source:** AGENTS.md knowledge architecture
 
-**Last triggered:** 2026-06-18 (Phase 9 + 17 — README/ARCHITECTURE/PLAN/docs updated, two decisions
-logged, dataset-eval knowledge domain added)
+**Last triggered:** 2026-07-06 (Phase 11 — README/PLAN/docs updated, decision logged, as-built
+walkthroughs added to docs/14 + docs/15; Phase 9 + 17 before that)
 
 ---
 

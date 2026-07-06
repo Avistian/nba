@@ -142,13 +142,19 @@ def _dense_block(
 
 def _build_policies(
     model: RewardModel, train_events: list, settings: Settings, rng: np.random.Generator
-) -> list[Policy]:
+) -> tuple[list[Policy], BootstrapEnsemble]:
+    """Build the three policies and return them alongside the fitted bootstrap ensemble.
+
+    The ensemble backs Thompson sampling *and* (Phase 11) the orchestrator's risk-aware door
+    pricing, so it is returned to the caller rather than hidden inside the policy list.
+    """
     ensemble = BootstrapEnsemble.fit(train_events, settings=settings, n_models=settings.n_bootstrap)
-    return [
+    policies = [
         EpsilonGreedy(model, epsilon=settings.epsilon, rng=rng),
         UCB(model, c=settings.ucb_c, temp=settings.softmax_temp, rng=rng),
         ThompsonSampling(ensemble, rng=rng),
     ]
+    return policies, ensemble
 
 
 def _plan_to_doors(
@@ -225,8 +231,8 @@ def run_demo(
     if write:
         model.save(settings.model_dir)
 
-    # 3. Policies.
-    policies = _build_policies(model, train_events, settings, np.random.default_rng(seed))
+    # 3. Policies (plus the ensemble that also feeds Phase 11 risk-aware pricing).
+    policies, ensemble = _build_policies(model, train_events, settings, np.random.default_rng(seed))
 
     # 4. OPE + gate selection.
     full_batch = LoggedBatch.from_events(ope_events)
@@ -272,6 +278,7 @@ def run_demo(
         distance_engine=engine,
         store=store,
         settings=settings,
+        reward_ensemble=ensemble,
     )
 
     # Routing stats from the initial plan + a visit-all baseline. A team plan (num_vehicles > 1)

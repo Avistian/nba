@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     distance_engine: Literal["haversine", "osrm"] = "haversine"  # travel-time backend
     osrm_url: str = "http://localhost:5000"  # OSRM Table service root when distance_engine=osrm
 
+    # Phase 11 — risk-aware routing. Price doors by mean - kappa*std over the bootstrap ensemble
+    # instead of a bare mean. All default to today's mean pricing: risk_kappa == 0.0 is a numeric
+    # no-op, and use_risk_aware_routing == False keeps plan_route on door_profit exactly.
+    use_risk_aware_routing: bool = False  # switch plan_route to the risk-adjusted door price
+    risk_kappa: float = 0.0  # penalty on per-door std; 0.0 => identical to mean pricing
+    risk_objective: Literal["mean_std", "cvar"] = "mean_std"  # mean-std, or per-door CVaR
+    cvar_alpha: float = 0.1  # worst-tail fraction for the CVaR objective
+
     # ope / gate
     ope_min_lift: float = 0.0
     ope_z: float = 1.96

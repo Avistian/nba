@@ -31,6 +31,10 @@ uv run python scripts/generate_relational_logs.py --n 20000 --out data/relationa
 uv run python scripts/run_experiment.py --baseline-only
 uv run python scripts/run_experiment.py --experiment-id phase09-relational --phase 09 --dataset relational
 
+# (optional) grade risk-aware routing (Phase 11): mean − κ·std pricing; κ=0 is an exact no-op
+uv run python scripts/run_experiment.py --experiment-id phase11-risk-kappa05 --phase 11 \
+    --set NBA_USE_RISK_AWARE_ROUTING=1 NBA_RISK_KAPPA=0.5
+
 # run the whole loop offline for one simulated shift + print the comparison report
 make demo      # = uv run python scripts/run_demo.py  (writes artifacts/demo_report.json)
 
@@ -75,8 +79,8 @@ with ethics guardrails and a system-level verification suite.
 | 7 | Orchestrator + FastAPI + event store | done |
 | 8 | Demo + end-to-end + ethics verification | done |
 | 9 | Relational dataset (mirrors flat, `dataset_mode`) | done |
-| 10 | Upgrade 1 — orienteering (budget / team / road) | planned |
-| 11 | Upgrade 3 — risk-aware routing | planned |
+| 10 | Upgrade 1 — orienteering (budget / team / road) | done |
+| 11 | Upgrade 3 — risk-aware routing | done |
 | 12 | Upgrade 2 — decision-focused learning | planned |
 | 13 | Upgrade 5 — dynamic / stochastic routing | planned |
 | 14 | Relational Deep Learning value model | planned |
@@ -117,7 +121,11 @@ EDA, reward-model explainability, display calibration, bandit behavior, off-poli
 TSP-with-profits routing, the orchestrator/API loop, the
 [end-to-end demo](notebooks/end_to_end_demo.ipynb), and a relational-structure EDA
 (`relational_structure_eda.ipynb`). The original (pre-parametrization) notebooks are preserved
-unchanged in [notebooks/old/](notebooks/old).
+unchanged in [notebooks/old/](notebooks/old). Per-upgrade demos accompany the roadmap phases:
+[`team_orienteering_demo.ipynb`](notebooks/team_orienteering_demo.ipynb) (Phase 10 — where a team
+beats one optimized rep) and
+[`risk_aware_routing_demo.ipynb`](notebooks/risk_aware_routing_demo.ipynb) (Phase 11 — the exact
+`κ=0` no-op and the realized-value risk-return frontier).
 
 ## Toolchain
 

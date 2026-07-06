@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from nba.api.store import EventStore
-from nba.bandits.base import Policy, QModel
+from nba.bandits.base import Policy, QEnsemble, QModel
 from nba.config import Settings
 from nba.routing.distance import DistanceEngine, HaversineEngine, OSRMEngine
 from nba.routing.tsp_profits import Route, solve_tsp_profits
@@ -54,6 +54,7 @@ class Orchestrator:
         store: EventStore,
         settings: Settings,
         argmax_profit: bool = False,
+        reward_ensemble: QEnsemble | None = None,
     ) -> None:
         self._policy = policy
         self._reward_model = reward_model
@@ -61,6 +62,12 @@ class Orchestrator:
         self._store = store
         self._settings = settings
         self._argmax_profit = argmax_profit
+        self._reward_ensemble = reward_ensemble
+        if settings.use_risk_aware_routing and reward_ensemble is None:
+            raise ValueError(
+                "use_risk_aware_routing=True requires a reward_ensemble (the bootstrap ensemble "
+                "supplies the per-door uncertainty); pass reward_ensemble=... to Orchestrator."
+            )
 
     @property
     def policy_name(self) -> str:
@@ -102,8 +109,49 @@ class Orchestrator:
         weights = np.array([dist[a] for a in ACTIONS], dtype=np.float64)
         return float((weights * q).sum())
 
+    def door_profit_risk(self, ctx: ProspectContext) -> float:
+        """Risk-adjusted door value: the mean price, discounted by the ensemble's uncertainty.
+
+        Each ensemble member gives a full ``q`` row; the bandit-weighted value per member is a
+        sample of the door's route-relevant value, and its spread *is* the model's uncertainty.
+        Today's ``door_profit`` uses only the mean and throws that spread away; this method spends
+        it:
+
+        - ``mean_std`` (default): ``door_profit(ctx) - risk_kappa * std(v)`` -- a door the model
+          loves on average but disagrees about wildly is worth less than an equally-valuable sure
+          thing. The mean term is the deployed point estimate (:meth:`door_profit`), **not** the
+          ensemble mean, so ``risk_kappa == 0.0`` reproduces ``door_profit`` *exactly* -- the flag
+          is a true no-op until tuned.
+        - ``cvar``: the mean of the worst ``cvar_alpha`` fraction of the per-member values -- a
+          pragmatic per-door Conditional Value-at-Risk (an opt-in, strictly more conservative
+          objective; it has no no-op setting). Full *route-value* CVaR over correlated scenarios is
+          deferred to Phase 13's scenario machinery.
+        """
+        if self._reward_ensemble is None:
+            raise ValueError("door_profit_risk requires a reward_ensemble")
+        members = self._reward_ensemble.q_all_members(ctx)  # (B, |A|)
+        dist = self._policy.action_dist(ctx)
+        weights = np.array([dist[a] for a in ACTIONS], dtype=np.float64)
+        per_member_value = members @ weights  # (B,)
+        if self._settings.risk_objective == "cvar":
+            alpha = self._settings.cvar_alpha
+            k = max(1, int(np.ceil(alpha * per_member_value.size)))
+            worst = np.sort(per_member_value)[:k]
+            return float(worst.mean())
+        std = float(per_member_value.std())
+        return self.door_profit(ctx) - self._settings.risk_kappa * std
+
+    def _door_price(self, ctx: ProspectContext) -> float:
+        """Risk-adjusted door price when the flag is set, else the bandit-weighted mean."""
+        if self._settings.use_risk_aware_routing:
+            return self.door_profit_risk(ctx)
+        return self.door_profit(ctx)
+
     def plan_route(self, contexts: list[ProspectContext]) -> Route | list[Route]:
         """Plan a walkable route over ``contexts``, pricing each door by its bandit-weighted value.
+
+        With ``use_risk_aware_routing`` (Phase 11) the price is instead the ensemble's risk-adjusted
+        value (:meth:`door_profit_risk`); ``risk_kappa == 0.0`` recovers the mean price exactly.
 
         The depot is the centroid of the doors (a stand-in for the rep's current location);
         every door inherits the configured residential time window.
@@ -123,7 +171,7 @@ class Orchestrator:
             float(np.mean([lon for _, lon in door_coords])),
         )
         coords = [depot, *door_coords]
-        profits = [0.0, *(self.door_profit(c) for c in contexts)]
+        profits = [0.0, *(self._door_price(c) for c in contexts)]
         time_matrix = self._distance_engine.time_matrix(coords)
 
         open_s = self._settings.time_window[0] * 3600

@@ -161,9 +161,22 @@ so a 2nd rep is redundant — its value target is multi-territory routing, so th
 `tests/test_routing.py` (budget binds/drops as it tightens; team partitions with no double-serve). See
 [decisions/2026-07-02-phase10-orienteering-implementation.md](decisions/2026-07-02-phase10-orienteering-implementation.md).
 
-### Phase 11 — Upgrade 3: Risk-aware routing *(depends 4, 7)* — [plan](plans/phase-11-risk-aware-routing.md) · [doc](docs/15-risk-aware-routing.md)
-Price doors `mean − κ·std` over the bootstrap ensemble (optional CVaR); flags
-`use_risk_aware_routing`, `risk_kappa` (`κ=0` is a no-op).
+### Phase 11 — Upgrade 3: Risk-aware routing *(depends 4, 7)* — ✅ **built** — [plan](plans/phase-11-risk-aware-routing.md) · [doc](docs/15-risk-aware-routing.md)
+Price doors `mean − κ·std` over the bootstrap ensemble (optional per-door CVaR) instead of a bare
+mean, spending the uncertainty Thompson already computes. The mean term is the deployed point
+estimate (`door_profit`), **not** the ensemble mean, so `risk_kappa=0` reproduces today's price
+**bit-for-bit**; flags `use_risk_aware_routing`/`risk_kappa`/`risk_objective`/`cvar_alpha` all default
+to that no-op. A localized change: only `Orchestrator.door_profit_risk` (fed an optional
+`reward_ensemble`) differs; `solve_tsp_profits` is untouched. Leaderboard vs `baseline` (6 shifts):
+`phase11-risk-kappa0` = **neutral** (realized value +4.526, byte-identical to baseline — the exact
+no-op proof); `phase11-risk-kappa05`/`kappa10` = **regression** at single-block scale (+3.913 /
++2.350) — like Phase 10's team row, the dense-block demo geometry doesn't exercise the value regime:
+discounting epistemic-uncertain doors there only sheds profitable doors without shrinking realized
+variance, because the block's variance isn't uncertainty-driven. The flag stays **off by default**;
+mechanics (exact no-op, uncertainty discount, high-spread-dropped-first, per-door CVaR) are proven by
+`tests/test_orchestrator.py`, and the value regime (binding-capacity territories) is shown in
+[notebooks/risk_aware_routing_demo.ipynb](notebooks/risk_aware_routing_demo.ipynb). See
+[decisions/2026-07-06-phase11-risk-aware-routing-implementation.md](decisions/2026-07-06-phase11-risk-aware-routing-implementation.md).
 
 ### Phase 12 — Upgrade 2: Decision-focused learning *(depends 3, 5, 6)* — [plan](plans/phase-12-decision-focused-learning.md) · [doc](docs/16-decision-focused-learning.md)
 Train the reward model on **route value** not prediction error: decision-aware reweighting, then an
@@ -218,7 +231,7 @@ and shared demo helpers in `drift_demo_common.py`. Makefile targets: `online-dri
 
 | Claim | Where | State |
 |-------|-------|-------|
-| `pytest` green across all modules | `make test` (166 passed, 1 skipped) | ✅ |
+| `pytest` green across all modules | `make test` (294 collected, green; 1 OBP slow skip) | ✅ |
 | OPE estimators match OBP within tolerance | `tests/test_ope.py` (slow) | ✅ |
 | Bandit beats the uniform baseline | `tests/test_e2e.py::test_bandit_beats_uniform` | ✅ |
 | Selected policy's value beats the logging baseline | `tests/test_e2e.py::test_selected_policy_beats_logging_baseline` | ✅ |
@@ -237,7 +250,7 @@ and shared demo helpers in `drift_demo_common.py`. Makefile targets: `online-dri
 | All defaults reproduce today's single-vehicle route; `num_vehicles=1` returns a single `Route` | `tests/test_routing.py`, `tests/test_config.py` (Phase 10) | ✅ |
 | `OSRMEngine` parses `/table` durations (symmetric, zero-diag) and raises on failure (mocked HTTP) | `tests/test_distance.py` (Phase 10) | ✅ |
 | All upgrade flags off reproduce today's behavior exactly | per-phase tests (Phases 9–16) | ⏳ planned |
-| Risk-aware routing reduces realized-value variance (κ=0 no-op) | `tests/test_orchestrator.py` (Phase 11) | ⏳ planned |
+| Risk-aware routing prices `mean − κ·std`; `κ=0` is a bit-exact no-op; high-spread doors dropped first | `tests/test_orchestrator.py` (Phase 11) | ✅ |
 | Decision-focused model lowers decision regret at ≥ OPE | `tests/test_decision_focused.py` (Phase 12) | ⏳ planned |
 | Stochastic prizes shrink downside risk | `tests/test_dynamic.py` (Phase 13) | ⏳ planned |
 | RDL model promotes only via the same DR gate on route value | `tests/test_graph_model.py` (Phase 14) | ⏳ planned |
@@ -260,9 +273,10 @@ to optimal). The demo reports the full curve so the stationarity is visible.
 
 ## Status
 
-**Phases 0–8 are implemented and verified, plus Phase 9 (relational dataset), Phase 17 (experiment
-leaderboard), Phase 18 (drift monitoring + conditional retrain), and Phase 19 (online drift demo +
-email alerting)** — `ruff`/`pyright` clean, `pytest` green. The full loop — simulator → reward model →
+**Phases 0–8 are implemented and verified, plus Phase 9 (relational dataset), Phase 10 (budgeted /
+team / road-aware orienteering), Phase 11 (risk-aware routing), Phase 17 (experiment leaderboard),
+Phase 18 (drift monitoring + conditional retrain), and Phase 19 (online drift demo + email
+alerting)** — `ruff`/`pyright` clean, `pytest` green. The full loop — simulator → reward model →
 bandit policies → OPE gate → TSP-with-profits router → orchestrator + FastAPI service over an
 append-only SQLite event store, with ethics guardrails — runs offline and end-to-end. Drift monitoring
 scores append-only logs and retrains only when triggered; optional Grafana/Prometheus visualize the

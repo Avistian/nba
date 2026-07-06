@@ -15,3 +15,5 @@ more than today's task.
 | 2026-06-18 | Feature-flagged improvement roadmap; relational dataset first | [2026-06-18-feature-flagged-relational-upgrades.md](2026-06-18-feature-flagged-relational-upgrades.md) |
 | 2026-06-18 | Relational dataset keeps the BanditEvent contract (sidecars + `household_id`) | [2026-06-18-relational-dataset-contract.md](2026-06-18-relational-dataset-contract.md) |
 | 2026-06-18 | Dataset-aware grading through an oracle facade | [2026-06-18-dataset-aware-grading-oracle.md](2026-06-18-dataset-aware-grading-oracle.md) |
+| 2026-07-02 | Phase 10 orienteering: additive solver params, stdlib OSRM, span budget | [2026-07-02-phase10-orienteering-implementation.md](2026-07-02-phase10-orienteering-implementation.md) |
+| 2026-07-06 | Phase 11 risk-aware routing: `door_profit − κ·std`; `κ=0` bit-exact no-op | [2026-07-06-phase11-risk-aware-routing-implementation.md](2026-07-06-phase11-risk-aware-routing-implementation.md) |
