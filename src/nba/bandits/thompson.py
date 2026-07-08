@@ -59,7 +59,14 @@ class BootstrapEnsemble:
             rng = np.random.default_rng(seed)
             idx = rng.integers(0, len(events), size=len(events))
             resample = [events[i] for i in idx]
-            member_settings = settings.model_copy(update={"seed": seed})
+            # Phase 12: the ensemble quantifies *uncertainty* (spread) for Thompson/risk pricing;
+            # the decision-focused (SPO+/reweight) correction is a *point*-model concern applied to
+            # the served reward model, not to members. Disabling it here keeps the ensemble's
+            # uncertainty semantics unchanged and avoids an n_models-fold fine-tune cost. When the
+            # flag is off (default) this is a no-op.
+            member_settings = settings.model_copy(
+                update={"seed": seed, "use_decision_focused": False}
+            )
             members.append(RewardModel.fit(resample, settings=member_settings, verbose=verbose))
         return cls(members)
 

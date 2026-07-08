@@ -29,11 +29,17 @@ _FEATURES_FILE = "feature_names.json"
 
 @dataclass
 class RewardModel:
-    """A fitted LightGBM regressor plus optional isotonic calibrator."""
+    """A fitted LightGBM regressor plus optional isotonic calibrator.
+
+    ``head`` is an optional linear correction over the frozen ``featurize(x, a)`` vector, added to
+    the raw booster output before calibration. It is the Phase 12 decision-focused (SPO+) fine-tune
+    seam: ``head is None`` (the default) reproduces the plain predict-then-optimize model exactly.
+    """
 
     booster: LGBMRegressor
     calibrator: IsotonicRegression | None
     feature_names: list[str]
+    head: np.ndarray | None = None
 
     @classmethod
     def fit(
@@ -71,9 +77,24 @@ class RewardModel:
         callbacks: list[Any] = [early_stopping(40, verbose=verbose)]
         if verbose:
             callbacks.append(log_evaluation(50))
+
+        # Phase 12: decision-aware row weights (cheap, gradient-free on-ramp). ``None`` is
+        # LightGBM's default, so the flag-off path is byte-identical to the plain fit.
+        sample_weight = None
+        if settings.use_decision_focused and settings.df_mode == "reweight":
+            from nba.reward.decision_focused import decision_aware_weights
+
+            weights = decision_aware_weights(
+                labeled,
+                boundary_quantile=settings.df_boundary_quantile,
+                upweight=settings.df_upweight,
+            )
+            sample_weight = weights[train_idx]
+
         booster.fit(
             x[train_idx],
             y[train_idx],
+            sample_weight=sample_weight,
             eval_set=[(x[val_idx], y[val_idx])],
             eval_metric="l2",
             callbacks=callbacks,
@@ -83,11 +104,21 @@ class RewardModel:
         calibrator = IsotonicRegression(out_of_bounds="clip")
         calibrator.fit(np.asarray(raw_val, dtype=np.float64), y[val_idx])
 
-        return cls(booster=booster, calibrator=calibrator, feature_names=list(FEATURE_NAMES))
+        model = cls(booster=booster, calibrator=calibrator, feature_names=list(FEATURE_NAMES))
+
+        # Phase 12: optional SPO+ fine-tune of a linear correction head. Imported lazily so the
+        # default path (flag off) never touches the routing-backed decision-focused module.
+        if settings.use_decision_focused and settings.df_mode == "spo":
+            from nba.reward.decision_focused import spo_finetune
+
+            model = spo_finetune(model, labeled, settings=settings)
+        return model
 
     def _predict(self, x: np.ndarray) -> np.ndarray:
-        """Apply the booster then the calibrator (if present)."""
+        """Apply the booster (plus the optional linear head) then the calibrator (if present)."""
         raw = np.asarray(self.booster.predict(x), dtype=np.float64)
+        if self.head is not None:
+            raw = raw + np.asarray(x, dtype=np.float64) @ self.head
         if self.calibrator is not None:
             return np.asarray(self.calibrator.transform(raw), dtype=np.float64)
         return raw
@@ -108,7 +139,8 @@ class RewardModel:
         """Persist the booster + calibrator and the frozen feature-name list."""
         model_dir.mkdir(parents=True, exist_ok=True)
         joblib.dump(
-            {"booster": self.booster, "calibrator": self.calibrator}, model_dir / _MODEL_FILE
+            {"booster": self.booster, "calibrator": self.calibrator, "head": self.head},
+            model_dir / _MODEL_FILE,
         )
         (model_dir / _FEATURES_FILE).write_text(json.dumps(self.feature_names))
 
@@ -125,6 +157,7 @@ class RewardModel:
             booster=payload["booster"],
             calibrator=payload["calibrator"],
             feature_names=feature_names,
+            head=payload.get("head"),  # absent on models persisted before Phase 12
         )
 
 

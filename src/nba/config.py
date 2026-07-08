@@ -63,6 +63,21 @@ class Settings(BaseSettings):
     risk_objective: Literal["mean_std", "cvar"] = "mean_std"  # mean-std, or per-door CVaR
     cvar_alpha: float = 0.1  # worst-tail fraction for the CVaR objective
 
+    # Phase 12 — decision-focused learning. Train the reward model so the router's include/skip/
+    # order decisions are good, not so its predictions win an accuracy contest. All default to
+    # today's plain squared-error fit: use_decision_focused == False is a byte-exact no-op.
+    use_decision_focused: bool = False  # enable a decision-focused stage in RewardModel.fit
+    df_mode: Literal["reweight", "spo"] = "reweight"  # cheap row-weighting, or the SPO+ fine-tune
+    df_boundary_quantile: float = 0.1  # width of the include/skip boundary band that is upweighted
+    df_upweight: float = 3.0  # weight multiplier for boundary-band rows (reweight mode)
+    spo_epochs: int = 5  # SPO+ passes over the historical neighborhoods
+    spo_lr: float = 0.01  # SPO+ subgradient step size
+    spo_batch: int = 32  # neighborhoods per SPO+ step
+    spo_neighborhood_size: int = 10  # doors per synthetic routing instance
+    spo_time_limit_s: float = 0.05  # inner OR-Tools budget per SPO+ solve (base router uses 5.0s)
+    spo_max_neighborhoods: int = 128  # cap on synthetic instances per epoch (bounds fine-tune cost)
+    spo_l2: float = 0.0  # L2 penalty on the linear correction head
+
     # ope / gate
     ope_min_lift: float = 0.0
     ope_z: float = 1.96

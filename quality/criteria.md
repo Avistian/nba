@@ -38,8 +38,9 @@ and add categories as the project evolves.
 
 **Source:** ARCHITECTURE.md §2, decisions/2026-06-01-oracle-isolation.md
 
-**Last triggered:** 2026-06-18 (Phase 9 — guard prefix `nba.data.sim` would have missed
-`relational_simulator`; extended to also match it so the relational oracle stays isolated)
+**Last triggered:** 2026-07-08 (Phase 12 — new learning module `reward/decision_focused.py`; SPO+
+needed a "true prize" and the guard forced the production-faithful realized `event.reward` instead of
+the simulator oracle; `test_no_oracle_leak` passes)
 
 ---
 
@@ -77,8 +78,9 @@ and add categories as the project evolves.
 
 **Source:** knowledge/dataset-eval/rules.md R5–R6, decisions/2026-06-18-dataset-aware-grading-oracle.md
 
-**Last triggered:** 2026-07-06 (Phase 11 — a first `phase11-risk-kappa0` row recorded a spurious
-regression from a not-quite-no-op price; fixed, then superseded by a new append-only row)
+**Last triggered:** 2026-07-08 (Phase 12 — `phase12-reweight`/`phase12-spo` appended as honest
+regressions; reweight lowers `decision_regret_mean` at ≥ OPE but not realized value, so it correctly
+does not earn a lift)
 
 ---
 
@@ -98,8 +100,10 @@ regression from a not-quite-no-op price; fixed, then superseded by a new append-
 **Source:** PLAN.md "feature-flag-first" principle, decisions/2026-06-18-feature-flagged-relational-upgrades.md,
 decisions/2026-07-06-phase11-risk-aware-routing-implementation.md
 
-**Last triggered:** 2026-07-06 (Phase 11 — `door_profit_risk` first priced off the ensemble mean, so
-`kappa=0` drifted from `door_profit`; re-anchored on `door_profit` for a bit-exact no-op)
+**Last triggered:** 2026-07-08 (Phase 12 — a raw-feature SPO+ head exploded (`|head|~2.7e4`) and
+broke predictions; re-fit in standardized space then folded to raw so `head=None` /
+`spo_epochs=0` reproduce the base exactly, and `BootstrapEnsemble.fit` disables DF on members so the
+no-op holds ensemble-wide)
 
 ---
 
@@ -194,8 +198,8 @@ decisions/2026-07-06-phase11-risk-aware-routing-implementation.md
 
 **Source:** AGENTS.md knowledge architecture
 
-**Last triggered:** 2026-07-06 (Phase 11 — README/PLAN/docs updated, decision logged, as-built
-walkthroughs added to docs/14 + docs/15; Phase 9 + 17 before that)
+**Last triggered:** 2026-07-08 (Phase 12 — PLAN row flipped to built with the honest leaderboard
+summary, decision logged, teaching notebook `decision_focused_demo.ipynb` added; Phase 11 before that)
 
 ---
 

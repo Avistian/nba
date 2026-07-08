@@ -178,9 +178,28 @@ mechanics (exact no-op, uncertainty discount, high-spread-dropped-first, per-doo
 [notebooks/risk_aware_routing_demo.ipynb](notebooks/risk_aware_routing_demo.ipynb). See
 [decisions/2026-07-06-phase11-risk-aware-routing-implementation.md](decisions/2026-07-06-phase11-risk-aware-routing-implementation.md).
 
-### Phase 12 — Upgrade 2: Decision-focused learning *(depends 3, 5, 6)* — [plan](plans/phase-12-decision-focused-learning.md) · [doc](docs/16-decision-focused-learning.md)
-Train the reward model on **route value** not prediction error: decision-aware reweighting, then an
-SPO+ fine-tune behind the `QModel` protocol; flags `use_decision_focused`, `df_mode`.
+### Phase 12 — Upgrade 2: Decision-focused learning *(depends 3, 5, 6)* — ✅ **built** — [plan](plans/phase-12-decision-focused-learning.md) · [doc](docs/16-decision-focused-learning.md)
+Train the reward model on **route value** not prediction error via two on-ramps behind one flag
+(`use_decision_focused`, `df_mode`), both preserving the served `QModel` interface (orchestrator/API/
+bandits/OPE untouched): (1) gradient-free **reweighting** upweights training rows near the
+include/skip boundary (LightGBM `sample_weight`); (2) an **SPO+ fine-tune** steps a linear
+**correction head** on top of the frozen booster so the induced route matches the realized-reward
+route. The head is fit in **standardized** feature space then folded to raw (a raw-space linear head
+would explode); `use_decision_focused=False` and `spo_epochs=0`/`spo_lr=0` reproduce today's model
+**exactly** (unit-tested). SPO+'s "true prize" is the **realized logged reward** (oracle-free — the
+new `reward/decision_focused.py` passes the no-oracle-leak AST scan), it corrects the **argmax door
+value** the router actually collects, and DF applies to the **served point model only** (the
+bootstrap ensemble stays plain, preserving its uncertainty semantics and avoiding an
+`n_bootstrap`-fold cost). Leaderboard vs `baseline` (6 shifts): `phase12-reweight` = **regression**
+on realized value (+4.428) yet *lowers* decision regret (0.907 < 0.911) at *≥* OPE (LCB 0.077 >
+0.076) — the decision-focused needle moves, but like Phases 10-11 the dense-block demo doesn't
+exercise the value regime (the base LightGBM already ranks doors near-optimally at this scale);
+`phase12-spo` = **regression** (+4.079) — high-variance against a strong base. The flag stays **off
+by default**; mechanics (byte-exact no-op, boundary reweighting, SPO+ zero-step identity, calibrated
+`QModel`, DR-gate compatibility, weak-base regret win) are proven by `tests/test_decision_focused.py`
+and the value/teaching regime is shown in
+[notebooks/decision_focused_demo.ipynb](notebooks/decision_focused_demo.ipynb). See
+[decisions/2026-07-08-phase12-decision-focused-learning-implementation.md](decisions/2026-07-08-phase12-decision-focused-learning-implementation.md).
 
 ### Phase 13 — Upgrade 5: Dynamic/stochastic routing *(depends 7, 11)* — [plan](plans/phase-13-dynamic-stochastic-routing.md) · [doc](docs/17-dynamic-stochastic-routing.md)
 Stochastic prizes + optional lookahead/rollout replanning on top of `replan`; flags
@@ -231,7 +250,7 @@ and shared demo helpers in `drift_demo_common.py`. Makefile targets: `online-dri
 
 | Claim | Where | State |
 |-------|-------|-------|
-| `pytest` green across all modules | `make test` (294 collected, green; 1 OBP slow skip) | ✅ |
+| `pytest` green across all modules | `make test` (302 collected, green; 1 OBP slow skip) | ✅ |
 | OPE estimators match OBP within tolerance | `tests/test_ope.py` (slow) | ✅ |
 | Bandit beats the uniform baseline | `tests/test_e2e.py::test_bandit_beats_uniform` | ✅ |
 | Selected policy's value beats the logging baseline | `tests/test_e2e.py::test_selected_policy_beats_logging_baseline` | ✅ |
@@ -251,7 +270,7 @@ and shared demo helpers in `drift_demo_common.py`. Makefile targets: `online-dri
 | `OSRMEngine` parses `/table` durations (symmetric, zero-diag) and raises on failure (mocked HTTP) | `tests/test_distance.py` (Phase 10) | ✅ |
 | All upgrade flags off reproduce today's behavior exactly | per-phase tests (Phases 9–16) | ⏳ planned |
 | Risk-aware routing prices `mean − κ·std`; `κ=0` is a bit-exact no-op; high-spread doors dropped first | `tests/test_orchestrator.py` (Phase 11) | ✅ |
-| Decision-focused model lowers decision regret at ≥ OPE | `tests/test_decision_focused.py` (Phase 12) | ⏳ planned |
+| Decision-focused reweighting lowers decision regret at ≥ OPE; SPO+ head is a calibrated no-op at zero-step; default-off byte-identical | `tests/test_decision_focused.py` (Phase 12) | ✅ |
 | Stochastic prizes shrink downside risk | `tests/test_dynamic.py` (Phase 13) | ⏳ planned |
 | RDL model promotes only via the same DR gate on route value | `tests/test_graph_model.py` (Phase 14) | ⏳ planned |
 | Every phase logs a lift/regression leaderboard row vs baseline | `tests/test_leaderboard.py` (Phase 17) | ✅ |
