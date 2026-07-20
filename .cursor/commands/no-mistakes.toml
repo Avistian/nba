@@ -1,0 +1,19 @@
+description = "Run the no-mistakes validation pipeline: fresh-context review, E2E evidence, escalate ambiguity, open PR"
+
+prompt = """
+Act as the `no-mistakes` validation pipeline for the current change. Follow the trust guardrails
+in knowledge/agentic-workflow/rules.md — do NOT merge, and escalate ambiguity to me.
+
+1. Show me the diffstat first (glance gate). If the change is clearly off-target, stop and say so.
+2. In a FRESH context (do not rely on this session's authoring bias), peer-review the diff and
+   classify findings as either `obvious_bugs` (safe to auto-fix) or `ambiguous` (product-changing
+   or unclear — STOP and ask me; never auto-apply these).
+3. Auto-fix only the obvious bugs, each as its own commit with a Conventional Commit message.
+4. Produce END-TO-END evidence, not just unit tests: run `make demo` (or the relevant scenario),
+   save output under artifacts/no-mistakes/, and summarize it.
+5. Run `make check`; fix lint/format/type issues.
+6. Write a PR body with an auto-fix log and a Testing section that links the evidence, then use
+   the PR tool to open it.
+
+For a fully autonomous, terminal-driven version of this, run: `scripts/no_mistakes.sh -y`.
+"""
