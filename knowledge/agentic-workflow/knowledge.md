@@ -124,9 +124,11 @@ Pipeline (each agent step is a fresh `agent -p`, so review is unbiased):
    `{ obvious_bugs: [...], ambiguous: [...] }`. Obvious bugs are auto-fixed as **separate
    commits**; anything `ambiguous`/product-changing is printed and the pipeline **stops and
    escalates** (trust guardrail #2).
-5. **E2E evidence.** Run the configured E2E command (`make demo`, the API, a scenario script),
-   capture stdout/artifacts into `artifacts/no-mistakes/`, and require it to exist before
-   proceeding (guardrail #3).
+5. **Capability verification (agent).** Prefer `scripts/agent_verify.py` or
+   `.cursor/capability-verify.json`: an agent **exercises** the capability (any tools — shell,
+   browser MCP, custom evaluators), then a **fresh-context judge** scores acceptance criteria from
+   artifacts. Falls back to shell `--e2e` only when no spec exists. See
+   [capability-verification.md](capability-verification.md).
 6. **Docs + lint.** `make fmt` + a doc-gap agent pass.
 7. **Push + PR.** Push; open a PR whose body includes the auto-fix log and a **Testing** section
    linking the evidence (guardrail #4). Locally the user can use `gh pr create`; in this repo,

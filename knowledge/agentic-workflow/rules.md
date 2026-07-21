@@ -18,11 +18,12 @@ and asks. Never let a reviewer agent auto-apply a product decision.
 
 ## R3: Require end-to-end evidence before a PR is considered done
 
-Passing `make check` (lint + type + unit tests) is necessary but not sufficient. Run the real
-thing (`make demo` / the API / a scenario script) and attach an artifact (log/screenshot/output)
-to the PR's Testing section.
+Passing `make check` (lint + type + unit tests) is necessary but not sufficient. **An agent must
+exercise and verify new capabilities** — run `scripts/agent_verify.py` or commit
+`.cursor/capability-verify.json`. Shell-only smoke (`make demo`) is a fallback when no capability
+spec exists. Evidence lives in `artifacts/capability-verify/` with a `manifest.json`.
 
-*Source: article "force end-to-end evidence"; matches this repo's `quality/criteria.md`.*
+*Source: article "force end-to-end evidence"; capability-verification.md.*
 
 ## R4: One task → one agent → one branch → one PR
 

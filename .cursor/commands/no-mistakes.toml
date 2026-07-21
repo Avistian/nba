@@ -1,4 +1,4 @@
-description = "Run the no-mistakes validation pipeline: fresh-context review, E2E evidence, escalate ambiguity, open PR"
+description = "Run the no-mistakes validation pipeline: fresh-context review, agent capability verification, escalate ambiguity, open PR"
 
 prompt = """
 Act as the `no-mistakes` validation pipeline for the current change. Follow the trust guardrails
@@ -9,11 +9,17 @@ in knowledge/agentic-workflow/rules.md — do NOT merge, and escalate ambiguity 
    classify findings as either `obvious_bugs` (safe to auto-fix) or `ambiguous` (product-changing
    or unclear — STOP and ask me; never auto-apply these).
 3. Auto-fix only the obvious bugs, each as its own commit with a Conventional Commit message.
-4. Produce END-TO-END evidence, not just unit tests: run `make demo` (or the relevant scenario),
-   save output under artifacts/no-mistakes/, and summarize it.
+4. **Verify capabilities with an agent** — do not rely on unit tests alone:
+   - If `.cursor/capability-verify.json` exists, run:
+     `python3 scripts/agent_verify.py --spec .cursor/capability-verify.json`
+   - Otherwise exercise the new capability yourself (shell, browser MCP, API calls) and save
+     evidence under `artifacts/capability-verify/<capability-id>/` including
+     `exercise-summary.json` and `exercise.log`.
+   - Then, in a **fresh** context, judge whether acceptance criteria are met from artifacts only.
+   - If you cannot exercise or the behavior is ambiguous, STOP and escalate — do not claim pass.
 5. Run `make check`; fix lint/format/type issues.
-6. Write a PR body with an auto-fix log and a Testing section that links the evidence, then use
-   the PR tool to open it.
+6. Write a PR body with an auto-fix log and a Testing section linking the manifest + artifacts.
 
-For a fully autonomous, terminal-driven version of this, run: `scripts/no_mistakes.sh -y`.
+Terminal automation: `scripts/no_mistakes.sh -y` (auto-detects capability-verify.json).
+Quick inline verify: `python3 scripts/agent_verify.py --capability "..." --acceptance "..."`.
 """

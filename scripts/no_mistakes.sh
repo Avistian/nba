@@ -21,7 +21,11 @@
 #   -y, --yes            Skip the interactive glance gate.
 #   --base BRANCH        Base branch to rebase onto (default: main).
 #   --validate CMD       Fast gate (default: "make check").
-#   --e2e CMD            End-to-end command that must succeed and emit output (default: "make demo").
+#   --e2e CMD            Shell E2E command (legacy; use --verify-spec for agent verification).
+#   --verify-spec FILE   Agent exercises + judges capabilities (see scripts/agent_verify.py).
+#   --verify-capability DESC   Quick single-capability agent verify (repeatable).
+#   --acceptance CRIT    Acceptance criterion for --verify-capability (repeatable).
+#   --exercise-hint HINT Hint for the exercise agent (repeatable).
 #   --no-push            Do everything except push / PR.
 #   --no-rebase          Skip the rebase step.
 #   -h, --help           Show help.
@@ -46,6 +50,10 @@ YES=0
 BASE="main"
 VALIDATE="make check"
 E2E="make demo"
+VERIFY_SPEC=""
+VERIFY_CAP=""
+VERIFY_ACCEPT=()
+VERIFY_HINTS=()
 PUSH=1
 REBASE=1
 
@@ -55,6 +63,10 @@ while [[ $# -gt 0 ]]; do
     --base) BASE="${2:?}"; shift 2 ;;
     --validate) VALIDATE="${2:?}"; shift 2 ;;
     --e2e) E2E="${2:?}"; shift 2 ;;
+    --verify-spec) VERIFY_SPEC="${2:?}"; shift 2 ;;
+    --verify-capability) VERIFY_CAP="${2:?}"; shift 2 ;;
+    --acceptance) VERIFY_ACCEPT+=("${2:?}"); shift 2 ;;
+    --exercise-hint) VERIFY_HINTS+=("${2:?}"); shift 2 ;;
     --no-push) PUSH=0; shift ;;
     --no-rebase) REBASE=0; shift ;;
     -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
@@ -143,16 +155,54 @@ if [[ "${ambig_n:-0}" -gt 0 ]]; then
 $ambig"
 fi
 
-# --- 5. Forced E2E evidence ---------------------------------------------------
-log "collecting E2E evidence: $E2E"
+# --- 5. Capability verification (agent exercises + judges) or shell E2E ------------
 mkdir -p artifacts/no-mistakes
-EV="artifacts/no-mistakes/evidence-$(date +%Y%m%d-%H%M%S).log"
-if ! bash -c "$E2E" >"$EV" 2>&1; then
-  esc "E2E command failed; evidence at $EV (tail below):
+EV=""
+MANIFEST=""
+VERIFY_MODE="shell"
+
+if [[ -n "$VERIFY_SPEC" || -n "$VERIFY_CAP" ]]; then
+  VERIFY_MODE="agent"
+  log "agent capability verification"
+  AV=(python3 "$(git rev-parse --show-toplevel)/scripts/agent_verify.py" --base "$BASE")
+  [[ -n "$VERIFY_SPEC" ]] && AV+=(--spec "$VERIFY_SPEC")
+  if [[ -n "$VERIFY_CAP" ]]; then
+    AV+=(--capability "$VERIFY_CAP")
+    for a in "${VERIFY_ACCEPT[@]}"; do AV+=(--acceptance "$a"); done
+    for h in "${VERIFY_HINTS[@]}"; do AV+=(--exercise-hint "$h"); done
+  fi
+  if ! "${AV[@]}" >artifacts/no-mistakes/agent-verify.log 2>&1; then
+    rc=$?
+    esc "Agent capability verification failed (exit $rc). Log:
+$(tail -n 30 artifacts/no-mistakes/agent-verify.log)"
+  fi
+  MANIFEST="$(find artifacts/capability-verify -name manifest.json 2>/dev/null | head -1)"
+  [[ -n "$MANIFEST" && -f "$MANIFEST" ]] || esc "Agent verify passed but no manifest.json found"
+  EV="artifacts/no-mistakes/agent-verify.log"
+  log "capability verification passed — manifest: $MANIFEST"
+elif [[ -f .cursor/capability-verify.json ]]; then
+  VERIFY_MODE="agent"
+  log "found .cursor/capability-verify.json — running agent verification"
+  if ! python3 "$(git rev-parse --show-toplevel)/scripts/agent_verify.py" \
+      --spec .cursor/capability-verify.json --base "$BASE" \
+      >artifacts/no-mistakes/agent-verify.log 2>&1; then
+    rc=$?
+    esc "Agent capability verification failed (exit $rc). Log:
+$(tail -n 30 artifacts/no-mistakes/agent-verify.log)"
+  fi
+  MANIFEST="$(find artifacts/capability-verify -name manifest.json 2>/dev/null | head -1)"
+  EV="artifacts/no-mistakes/agent-verify.log"
+  log "capability verification passed — manifest: $MANIFEST"
+else
+  log "collecting shell E2E evidence: $E2E"
+  EV="artifacts/no-mistakes/evidence-$(date +%Y%m%d-%H%M%S).log"
+  if ! bash -c "$E2E" >"$EV" 2>&1; then
+    esc "E2E command failed; evidence at $EV (tail below):
 $(tail -n 20 "$EV")"
+  fi
+  [[ -s "$EV" ]] || esc "E2E produced no output — refusing to claim it works. See $E2E."
+  log "E2E evidence saved: $EV"
 fi
-[[ -s "$EV" ]] || esc "E2E produced no output — refusing to claim it works. See $E2E."
-log "E2E evidence saved: $EV"
 
 # --- 6. Format + doc gaps -----------------------------------------------------
 bash -c "make fmt" >/dev/null 2>&1 || true
@@ -167,8 +217,20 @@ PRBODY="artifacts/no-mistakes/pr-body.md"
   echo "## Auto-fixes applied"
   if [[ -n "$FIXLOG" ]]; then echo '```'; echo "$FIXLOG"; echo '```'; else echo "_none_"; fi
   echo
-  echo "## Testing (E2E evidence)"
-  echo "Ran \`$E2E\`; output captured at \`$EV\`."
+  echo "## Testing (capability verification)"
+  if [[ "$VERIFY_MODE" == "agent" ]]; then
+    echo "Agent exercised and judged capabilities. Manifest: \`${MANIFEST:-artifacts/capability-verify/manifest.json}\`"
+    echo
+    if [[ -n "$MANIFEST" && -f "$MANIFEST" ]]; then
+      echo '```json'
+      cat "$MANIFEST"
+      echo '```'
+    fi
+    echo
+    echo "Exercise log tail (\`$EV\`):"
+  else
+    echo "Ran shell E2E: \`$E2E\`; output at \`$EV\`."
+  fi
   echo '```'
   tail -n 20 "$EV"
   echo '```'
