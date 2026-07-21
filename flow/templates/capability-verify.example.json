@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "feature-capabilities",
+  "output_dir": "artifacts/capability-verify",
+  "capabilities": [
+    {
+      "id": "happy-path",
+      "description": "The feature works end-to-end for the primary user flow",
+      "exercise": {
+        "hints": [
+          "Read the issue plan and README for how to run the app",
+          "Exercise the feature with shell, API calls, or browser MCP",
+          "Save screenshots, logs, and API responses under the output directory"
+        ],
+        "tools_allowed": ["shell", "read files", "browser MCP if configured"]
+      },
+      "acceptance": [
+        "Primary flow completes without error",
+        "Evidence files exist in exercise.log and artifacts",
+        "No unhandled exceptions in captured output"
+      ]
+    }
+  ]
+}

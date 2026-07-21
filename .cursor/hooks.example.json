@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      { "command": "./scripts/hooks/format_edited.sh" }
+    ],
+    "stop": [
+      { "command": "./scripts/hooks/stop_gate.sh" }
+    ]
+  }
+}

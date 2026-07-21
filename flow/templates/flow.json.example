@@ -1,0 +1,23 @@
+{
+  "base_branch": "main",
+  "validate": "make check",
+  "e2e": "make demo",
+  "format": "make fmt",
+  "base_context": "AGENTS.md",
+  "capability_verify_spec": ".cursor/capability-verify.json",
+  "artifacts_dir": "artifacts",
+  "format_on_edit": {
+    "*.py": "uv run ruff format {file}",
+    "*.ts": "npx prettier --write {file}",
+    "*.tsx": "npx prettier --write {file}"
+  },
+  "gnhf": {
+    "max_steps": 20,
+    "budget_usd": 10
+  },
+  "overnight": {
+    "parallel": 1,
+    "max_steps": 25,
+    "budget_usd": 15
+  }
+}
