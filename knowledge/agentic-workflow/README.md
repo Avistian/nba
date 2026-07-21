@@ -12,6 +12,7 @@ plus `Lavish Editor`. This domain re-derives those ideas as Cursor-native buildi
 |------|---------|
 | [knowledge.md](knowledge.md) | The tool-by-tool mapping, designs, and trust model |
 | [overnight-runbook.md](overnight-runbook.md) | Overnight gnhf + parallel agents playbook |
+| [capability-verification.md](capability-verification.md) | Agent exercises + judges capabilities (versatile E2E) |
 | [rules.md](rules.md) | Confirmed practices to apply by default |
 | [hypotheses.md](hypotheses.md) | Ideas that still need real usage data |
 
