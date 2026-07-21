@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# gnhf — fresh-context overnight orchestrator. Portable via flow/.
+set -uo pipefail
+_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/config.sh
+source "$_BIN/../lib/config.sh"
+flow_init
+
+die() { echo "gnhf: $*" >&2; exit 1; }
+log() { echo "[gnhf $(date +%H:%M:%S)] $*"; }
+
+AGENT_BIN="${AGENT_BIN:-agent}"
+COST_JQ="${COST_JQ:-.cost_usd // .usage.total_cost_usd // 0}"
+RESULT_JQ="${RESULT_JQ:-.result // .text // .response // .}"
+
+GOAL="" GOAL_FILE="" VALIDATE="$FLOW_VALIDATE" BASE_CONTEXT="$FLOW_BASE_CONTEXT"
+MAX_STEPS="$FLOW_GNHF_MAX_STEPS" BUDGET_USD="$FLOW_GNHF_BUDGET" BRANCH_PREFIX="gnhf/" MODEL=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -f|--file) GOAL_FILE="${2:?}"; shift 2 ;;
+    --validate) VALIDATE="${2:?}"; shift 2 ;;
+    --base-context) BASE_CONTEXT="${2:?}"; shift 2 ;;
+    --max-steps) MAX_STEPS="${2:?}"; shift 2 ;;
+    --budget-usd) BUDGET_USD="${2:?}"; shift 2 ;;
+    --branch-prefix) BRANCH_PREFIX="${2:?}"; shift 2 ;;
+    --model) MODEL="${2:?}"; shift 2 ;;
+    -h|--help)
+      echo "gnhf — good night, have fun (flow $FLOW_ROOT)"
+      sed -n '14,26p' "$0" 2>/dev/null || true
+      echo "Config: $FLOW_CONFIG (validate=$FLOW_VALIDATE)"
+      exit 0 ;;
+    -*) die "unknown option: $1" ;;
+    *) GOAL="$1"; shift ;;
+  esac
+done
+
+command -v git >/dev/null || die "git not found"
+cd "$REPO_ROOT" || die "cannot cd to $REPO_ROOT"
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not a git repo"
+command -v "$AGENT_BIN" >/dev/null 2>&1 || die "agent binary '$AGENT_BIN' not found"
+
+HAVE_JQ=0; command -v jq >/dev/null 2>&1 && HAVE_JQ=1
+[[ -n "$GOAL_FILE" ]] && { [[ -f "$GOAL_FILE" ]] || die "goal file not found: $GOAL_FILE"; GOAL="$(cat "$GOAL_FILE")"; }
+[[ -n "$GOAL" ]] || die "no goal (positional or -f FILE)"
+
+BASE_TEXT=""
+[[ -n "$BASE_CONTEXT" && -f "$BASE_CONTEXT" ]] && BASE_TEXT="$(cat "$BASE_CONTEXT")"
+[[ -n "$(git status --porcelain)" ]] && die "dirty tree; commit or stash first"
+
+slug() { echo "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | cut -c1-40 | sed 's/-*$//'; }
+BRANCH="${BRANCH_PREFIX}$(slug "$GOAL")-$(date +%m%d%H%M)"
+git checkout -b "$BRANCH" >/dev/null 2>&1 || die "could not create branch $BRANCH"
+log "branch: $BRANCH config: $FLOW_CONFIG"
+
+NOTES="notes.md"
+{
+  echo "# gnhf — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "**Goal:** $GOAL"
+  echo "**Gate:** \`$VALIDATE\` | **Budget:** \$$BUDGET_USD | **Max steps:** $MAX_STEPS"
+  echo; echo "## Step log"; echo
+} > "$NOTES"
+
+extract() { [[ "$HAVE_JQ" == "1" ]] && jq -r "$1" 2>/dev/null || cat; }
+spend="0"
+add_spend() { spend="$(awk -v a="$spend" -v b="${1:-0}" 'BEGIN{printf "%.4f", a+b}')"; }
+over_budget() { awk -v s="$spend" -v b="$BUDGET_USD" 'BEGIN{exit !(s>b)}'; }
+
+step=0; status="max-steps-reached"
+while (( step < MAX_STEPS )); do
+  step=$((step+1))
+  log "step $step/$MAX_STEPS (spent \$$spend)"
+  learnings="$(sed -n '/## Step log/,$p' "$NOTES")"
+  prompt="You are one step of an autonomous run toward a GOAL.
+
+# GOAL
+$GOAL
+
+# BASE CONTEXT
+$BASE_TEXT
+
+# LEARNINGS
+$learnings
+
+Make the SINGLE next smallest change. When GOAL is fully met and validation passes, print GNHF_DONE on its own line."
+
+  raw="$("$AGENT_BIN" -p --force --output-format json ${MODEL:+--model "$MODEL"} "$prompt" 2>&1)"
+  result="$(printf '%s' "$raw" | extract "$RESULT_JQ")"
+  cost="$(printf '%s' "$raw" | extract "$COST_JQ")"
+  [[ "$cost" =~ ^[0-9]+([.][0-9]+)?$ ]] || cost="0"
+  add_spend "$cost"
+
+  if printf '%s' "$result" | grep -q 'GNHF_DONE'; then
+    echo "- step $step: **DONE** (\$$cost)" >> "$NOTES"; status="done"; break
+  fi
+  if [[ -z "$(git status --porcelain)" ]]; then
+    echo "- step $step: no changes (\$$cost)" >> "$NOTES"; status="stuck-no-changes"; break
+  fi
+  if bash -c "$VALIDATE" >/tmp/gnhf_validate.log 2>&1; then
+    msg="$(printf '%s' "$result" | head -1 | cut -c1-72)"; [[ -z "$msg" ]] && msg="step $step"
+    git add -A && git commit -q -m "gnhf: $msg" || true
+    echo "- step $step: PASS \"$msg\" (\$$cost)" >> "$NOTES"
+  else
+    git reset --hard -q HEAD; git clean -fdq -e "$NOTES"
+    echo "- step $step: FAIL rolled back (\$$cost)" >> "$NOTES"
+    tail -n 10 /tmp/gnhf_validate.log | sed 's/^/    /' >> "$NOTES"
+  fi
+  over_budget && { status="budget-exceeded"; break; }
+done
+
+{
+  echo; echo "## Summary"
+  echo "- Status: **$status** | Steps: $step | Spend: \$$spend | Branch: \`$BRANCH\`"
+} >> "$NOTES"
+git add "$NOTES" 2>/dev/null; git commit -q -m "gnhf: notes ($status)" 2>/dev/null || true
+log "done: $status branch=$BRANCH — next: flow/bin/no-mistakes"

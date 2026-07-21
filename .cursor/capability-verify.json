@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "name": "nba-demo-capabilities",
+  "output_dir": "artifacts/capability-verify",
+  "setup": {
+    "shell": "uv sync --all-extras"
+  },
+  "capabilities": [
+    {
+      "id": "demo-runs",
+      "description": "The NBA offline demo runs end-to-end and produces routing decisions",
+      "exercise": {
+        "hints": [
+          "Run: uv run python scripts/run_demo.py",
+          "Capture stdout and any artifact paths the demo writes",
+          "If the demo writes JSON/logs, save copies under the output directory"
+        ],
+        "tools_allowed": ["shell", "read files"]
+      },
+      "acceptance": [
+        "Demo exits 0",
+        "Output mentions route assignments or policy decisions",
+        "No unhandled exceptions in exercise.log"
+      ],
+      "min_score": 0.9
+    },
+    {
+      "id": "oracle-isolation",
+      "description": "Serving/learning code paths do not leak simulator oracle fields",
+      "exercise": {
+        "hints": [
+          "Run: uv run pytest tests/test_ethics.py -q",
+          "Grep src/nba for true_reward, latent_scores, true_best_action in learning packages"
+        ]
+      },
+      "acceptance": [
+        "test_ethics passes",
+        "No new oracle imports in reward, bandits, ope, routing, api, pipeline"
+      ]
+    }
+  ]
+}

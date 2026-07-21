@@ -16,12 +16,23 @@ plus `Lavish Editor`. This domain re-derives those ideas as Cursor-native buildi
 | [rules.md](rules.md) | Confirmed practices to apply by default |
 | [hypotheses.md](hypotheses.md) | Ideas that still need real usage data |
 
-## Starter kit shipped with this domain
+## Portable toolkit: `flow/`
 
-- `scripts/gnhf.sh` — long-running fresh-context orchestrator (the `gnhf` idea)
-- `scripts/no_mistakes.sh` — autonomous validate-review-evidence-PR pipeline (the `no-mistakes` idea)
-- `scripts/agent_verify.py` — agent exercises + judges capabilities (versatile E2E)
-- `scripts/overnight.sh` — parallel gnhf + no-mistakes fan-out (worktrees)
-- `scripts/hooks/` — `afterFileEdit` formatter + `stop` gate for Cursor Hooks
-- `.cursor/hooks.example.json` — copy to `.cursor/hooks.json` to activate
-- `.cursor/commands/no-mistakes.toml` — `/no-mistakes` slash command
+All tools live in **[`flow/`](../../flow/)** — copy that folder into any repo. See
+[`flow/README.md`](../../flow/README.md) for setup and the full flow definition.
+
+Quick start in any repo:
+
+```bash
+./flow/install.sh repo    # creates .cursor/flow.json + templates
+export PATH="$(pwd)/flow/bin:$PATH"
+```
+
+## Starter kit (in `flow/`)
+
+- `flow/bin/gnhf` — long-running fresh-context orchestrator
+- `flow/bin/no-mistakes` — validate-review-evidence-PR pipeline
+- `flow/bin/agent-verify.py` — agent exercises + judges capabilities
+- `flow/bin/overnight` — parallel gnhf + no-mistakes fan-out
+- `flow/hooks/` + `flow/templates/` — Cursor hooks and per-repo config
+- `scripts/*.sh` — thin wrappers delegating to `flow/bin/` (this repo)

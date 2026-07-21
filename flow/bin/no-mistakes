@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# no-mistakes — validate, review, capability-verify, PR. Portable via flow/.
+set -uo pipefail
+_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_BIN/../lib/config.sh"
+flow_init
+
+die() { echo "no-mistakes: $*" >&2; exit 1; }
+log() { echo "[no-mistakes $(date +%H:%M:%S)] $*"; }
+esc() { echo; echo "==== ESCALATION ===="; echo "$*"; echo "====================="; exit 2; }
+
+AGENT_BIN="${AGENT_BIN:-agent}"
+RESULT_JQ="${RESULT_JQ:-.result // .text // .response // .}"
+REVIEW_JQ_BUGS="${REVIEW_JQ_BUGS:-.obvious_bugs // []}"
+REVIEW_JQ_AMBIG="${REVIEW_JQ_AMBIG:-.ambiguous // []}"
+
+YES=0 BASE="$FLOW_BASE_BRANCH" VALIDATE="$FLOW_VALIDATE" E2E="$FLOW_E2E"
+VERIFY_SPEC="" VERIFY_CAP="" VERIFY_ACCEPT=() VERIFY_HINTS=()
+PUSH=1 REBASE=1 FORMAT="$FLOW_FORMAT"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -y|--yes) YES=1; shift ;;
+    --base) BASE="${2:?}"; shift 2 ;;
+    --validate) VALIDATE="${2:?}"; shift 2 ;;
+    --e2e) E2E="${2:?}"; shift 2 ;;
+    --verify-spec) VERIFY_SPEC="${2:?}"; shift 2 ;;
+    --verify-capability) VERIFY_CAP="${2:?}"; shift 2 ;;
+    --acceptance) VERIFY_ACCEPT+=("${2:?}"); shift 2 ;;
+    --exercise-hint) VERIFY_HINTS+=("${2:?}"); shift 2 ;;
+    --no-push) PUSH=0; shift ;;
+    --no-rebase) REBASE=0; shift ;;
+    -h|--help) echo "no-mistakes — flow $FLOW_ROOT | config $FLOW_CONFIG"; exit 0 ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+
+cd "$REPO_ROOT" || die "cannot cd to repo"
+command -v git >/dev/null || die "git not found"
+command -v "$AGENT_BIN" >/dev/null 2>&1 || die "agent not found: $AGENT_BIN"
+HAVE_JQ=0; command -v jq >/dev/null 2>&1 && HAVE_JQ=1
+extract() { [[ "$HAVE_JQ" == "1" ]] && jq -r "$1" 2>/dev/null || cat; }
+
+NM_DIR="$FLOW_ARTIFACTS/no-mistakes"
+mkdir -p "$NM_DIR"
+
+DIFFSTAT="$(git diff --stat HEAD; git status --porcelain)"
+echo "----- change -----"; echo "$DIFFSTAT"; echo "------------------"
+[[ "$YES" == "1" ]] || { read -r -p "Looks right? [y/N] " a; [[ "$a" =~ ^[Yy]$ ]] || die "aborted"; }
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  cur="$(git rev-parse --abbrev-ref HEAD)"
+  if [[ "$cur" == "$BASE" ]]; then
+    slug="$("$AGENT_BIN" -p --output-format json "Name this change as a kebab-case git branch slug (3-6 words). ONLY the slug:
+$DIFFSTAT" 2>/dev/null | extract "$RESULT_JQ" | tr -cs 'a-z0-9-' '-' | sed 's/^-*//;s/-*$//' | cut -c1-40)"
+    [[ -z "$slug" ]] && slug="change-$(date +%m%d%H%M)"
+    git checkout -b "feat/$slug" || die "branch create failed"
+  fi
+  msg="$("$AGENT_BIN" -p --output-format json "One Conventional Commit subject for this diff. ONLY the line:
+$DIFFSTAT" 2>/dev/null | extract "$RESULT_JQ" | head -1)"
+  git add -A && git commit -q -m "${msg:-chore: agent changes}"
+fi
+
+if [[ "$REBASE" == "1" ]]; then
+  git fetch origin "$BASE" 2>/dev/null || true
+  git rebase "origin/$BASE" 2>/dev/null || git rebase "$BASE" 2>/dev/null || {
+    "$AGENT_BIN" -p --force "Resolve rebase conflicts, stage files" 2>/dev/null || true
+    git add -A && git rebase --continue 2>/dev/null || esc "rebase failed"
+  }
+  bash -c "$VALIDATE" >/tmp/nm_v.log 2>&1 || esc "validate failed after rebase"
+fi
+
+DIFF="$(git diff "$BASE"...HEAD 2>/dev/null || git show HEAD)"
+review="$("$AGENT_BIN" -p --output-format json "Peer review ONLY this diff. JSON: {\"obvious_bugs\":[],\"ambiguous\":[]}
+$DIFF")"
+bugs_n=0 ambig_n=0
+[[ "$HAVE_JQ" == "1" ]] && bugs_n="$(printf '%s' "$review" | jq '(.obvious_bugs//[])|length' 2>/dev/null || echo 0)"
+[[ "$HAVE_JQ" == "1" ]] && ambig_n="$(printf '%s' "$review" | jq '(.ambiguous//[])|length' 2>/dev/null || echo 0)"
+FIXLOG=""
+if [[ "${bugs_n:-0}" -gt 0 ]]; then
+  bugs="$(printf '%s' "$review" | extract "$REVIEW_JQ_BUGS")"
+  "$AGENT_BIN" -p --force "Fix ONLY: $bugs" 2>/dev/null || true
+  [[ -n "$(git status --porcelain)" ]] && bash -c "$VALIDATE" && git add -A && git commit -q -m "fix: reviewer bugs" && FIXLOG="$bugs"
+fi
+[[ "${ambig_n:-0}" -gt 0 ]] && esc "$(printf '%s' "$review" | extract "$REVIEW_JQ_AMBIG")"
+
+VERIFY_MODE="shell"
+MANIFEST="" EV=""
+AV=(python3 "$FLOW_AGENT_VERIFY" --base "$BASE")
+[[ -n "$VERIFY_SPEC" ]] && AV+=(--spec "$VERIFY_SPEC") && VERIFY_MODE="agent"
+[[ -n "$VERIFY_CAP" ]] && AV+=(--capability "$VERIFY_CAP") && VERIFY_MODE="agent"
+for a in "${VERIFY_ACCEPT[@]}"; do AV+=(--acceptance "$a"); done
+for h in "${VERIFY_HINTS[@]}"; do AV+=(--exercise-hint "$h"); done
+
+if [[ -n "$VERIFY_SPEC" || -n "$VERIFY_CAP" ]]; then
+  "${AV[@]}" >"$NM_DIR/agent-verify.log" 2>&1 || esc "agent verify failed"
+  MANIFEST="$(find "$FLOW_ARTIFACTS/capability-verify" -name manifest.json 2>/dev/null | head -1)"
+  EV="$NM_DIR/agent-verify.log"
+elif [[ -f "$FLOW_VERIFY_SPEC" ]]; then
+  VERIFY_MODE="agent"
+  python3 "$FLOW_AGENT_VERIFY" --spec "$FLOW_VERIFY_SPEC" --base "$BASE" >"$NM_DIR/agent-verify.log" 2>&1 || esc "verify failed"
+  MANIFEST="$(find "$FLOW_ARTIFACTS/capability-verify" -name manifest.json 2>/dev/null | head -1)"
+  EV="$NM_DIR/agent-verify.log"
+else
+  EV="$NM_DIR/evidence-$(date +%Y%m%d-%H%M%S).log"
+  bash -c "$E2E" >"$EV" 2>&1 || esc "E2E failed: $E2E"
+  [[ -s "$EV" ]] || esc "E2E empty output"
+fi
+
+bash -c "$FORMAT" 2>/dev/null || true
+[[ -n "$(git status --porcelain)" ]] && git add -A && git commit -q -m "style: format" 2>/dev/null || true
+
+PRBODY="$NM_DIR/pr-body.md"
+{
+  echo "## Summary"; echo "Processed by flow/no-mistakes."
+  echo; echo "## Auto-fixes"; [[ -n "$FIXLOG" ]] && echo "$FIXLOG" || echo "_none_"
+  echo; echo "## Testing"
+  [[ "$VERIFY_MODE" == "agent" ]] && echo "Manifest: \`$MANIFEST\`" && [[ -f "$MANIFEST" ]] && cat "$MANIFEST"
+  echo '```'; tail -20 "$EV"; echo '```'
+} > "$PRBODY"
+
+if [[ "$PUSH" == "1" ]]; then
+  br="$(git rev-parse --abbrev-ref HEAD)"
+  git push -u origin "$br" 2>/dev/null || log "push failed — manual"
+  command -v gh >/dev/null && gh pr create --fill --body-file "$PRBODY" 2>/dev/null || log "PR body: $PRBODY"
+else
+  log "PR body: $PRBODY"
+fi
+log "done — merge is manual"

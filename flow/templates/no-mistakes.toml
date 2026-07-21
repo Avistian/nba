@@ -1,0 +1,14 @@
+description = "Run flow validation: review, agent capability verify, PR evidence"
+
+prompt = """
+Run the portable flow validation pipeline (flow/bin/no-mistakes). Trust guardrails:
+
+1. Glance diffstat — stop if off-target.
+2. Fresh-context peer review: auto-fix obvious bugs only; escalate ambiguous to me.
+3. Agent capability verification: exercise the feature, judge from artifacts (not unit tests alone).
+   Use .cursor/capability-verify.json if present, or flow/bin/agent-verify.py inline.
+4. Run validate/format from .cursor/flow.json.
+5. Write PR body with manifest + evidence. Do not merge.
+
+CLI: `flow/bin/no-mistakes -y` from repo root (requires CURSOR_API_KEY for headless).
+"""
