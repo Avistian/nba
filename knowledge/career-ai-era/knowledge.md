@@ -76,6 +76,13 @@ engineer (or adjacent) when coding agents do much of the implementation work.
 - arXiv: Skills for the future software profession (V&V, cognitive debt, specs)
 - Floor/ceiling career framework (Tygart); Proof Layer career moat (Loredan)
 
+## Time investment (default practice split)
+
+Outside firefighting, deliberate growth time ≈ **40% ship one real loop / 25% evals & proof /
+20% deep ML or domain / 10% agentic craft / 5% reading**. No study hour without a linked artifact.
+Prefer owning an eval gate or online metric at work over night-and-weekend course bingeing.
+Detail: `docs/research/2026-07-26-ai-ml-time-investment.md`.
+
 ## Last updated
 
-2026-07-25
+2026-07-26

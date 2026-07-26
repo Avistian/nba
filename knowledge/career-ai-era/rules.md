@@ -23,3 +23,6 @@ affect how humans create value.
 
 7. **Compound with an agentic experimentation loop.** Keep human taste on hypothesis selection and
    result interpretation; let agents run mechanical sweeps and tabulation.
+
+8. **Invest growth time in artifacts, not content.** Default split: ship loop > evals > deep edge >
+   agentic drills > reading. Courses without a deployed/eval artifact within 30 days are a fail.
